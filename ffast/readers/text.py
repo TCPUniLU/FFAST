@@ -199,6 +199,8 @@ def get_energies(reader_class, path, *, workers=None, use_cache=True):
 
 def _read_energies(reader_class, path, starts, workers):
     n = len(starts)
+    if workers is None and callable(getattr(reader_class, "parse_into", None)) and fast_parser_usable():
+        workers = 1       # a reader with the fast parser reads energies on its own threads (ADR 0100)
     if workers is None:
         workers = min(xa.worker_count(), ENERGY_WORKERS)
     if workers <= 1 or n < max(ENERGY_PARALLEL_MIN_FRAMES, 2):

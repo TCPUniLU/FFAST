@@ -70,22 +70,32 @@ class XyzReader:
     def energies(path, starts):
         """The energies on the header lines of the frames starting at
         ``starts``: {name: one float per frame, NaN where a frame has none}.
-        Only each frame's second line is read, never its atoms."""
-        import mmap
-        out = {}
-        n = len(starts)
-        if n == 0:
-            return out
-        with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-            for i, start in enumerate(np.asarray(starts).tolist()):
-                head = mm.find(b"\n", start) + 1
-                end = mm.find(b"\n", head)
-                for name, value in xa.header_energies(mm[head:end if end >= 0 else len(mm)]).items():
-                    column = out.get(name)
-                    if column is None:
-                        column = out[name] = np.full(n, np.nan)
-                    column[i] = value
-        return out
+        Only each frame's second line is read, never its atoms.
+
+        With the fast parser (ADR 0100) Rust reads the headers on threads, by
+        the same rules; a header only Python can judge (``nan``, ``1_000``, a
+        tab) is read here, and the names keep the order they first appear."""
+        from ffast.readers import text
+        if len(starts) == 0 or not text.fast_parser_usable():
+            return _energies_python(path, starts)
+        import ffast_xyz
+        names, firsts, columns, python = ffast_xyz.energies(
+            str(path), np.ascontiguousarray(starts, dtype=np.uint64), sorted(xa._per_config_properties()),
+            xa.worker_count())
+        out = dict(zip(names, columns))
+        first = {name: tuple(f) for name, f in zip(names, firsts)}   # (frame, place in its header)
+        if len(python):
+            import mmap
+            starts = np.asarray(starts)
+            with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                for frame in np.asarray(python).tolist():
+                    found = xa.header_energies(_header(mm, int(starts[frame])))
+                    for rank, (name, value) in enumerate(found.items()):
+                        if name not in out:
+                            out[name] = np.full(len(starts), np.nan)
+                        out[name][frame] = value
+                        first[name] = min(first.get(name, (frame, rank)), (frame, rank))
+        return {name: out[name] for name in sorted(out, key=first.__getitem__)}
 
     @staticmethod
     def parse_into(path, starts, ends, counts, first_frame, arrays, threads):
@@ -143,6 +153,30 @@ class XyzReader:
         for key, column in names["atom_columns"].items():
             out[f"atom:{key}"] = fa.columns[column].astype(np.float64)
         return out
+
+
+def _header(mm, start):
+    """The header line of the frame starting at ``start`` (the line after it)."""
+    head = mm.find(b"\n", start) + 1
+    end = mm.find(b"\n", head)
+    return mm[head:end if end >= 0 else len(mm)]
+
+
+def _energies_python(path, starts):
+    """``XyzReader.energies`` by the Python code, one header at a time."""
+    import mmap
+    out = {}
+    n = len(starts)
+    if n == 0:
+        return out
+    with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        for i, start in enumerate(np.asarray(starts).tolist()):
+            for name, value in xa.header_energies(_header(mm, start)).items():
+                column = out.get(name)
+                if column is None:
+                    column = out[name] = np.full(n, np.nan)
+                column[i] = value
+    return out
 
 
 def _names(value_keys, columns):

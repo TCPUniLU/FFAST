@@ -1102,11 +1102,278 @@ fn find_frames<'py>(
     Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state))
 }
 
+// ── energies for sampling ─────────────────────────────────────────────────
+//
+// A copy of `extxyz_arrays.header_energies` (the quick read) and its
+// `_quoted_values`, step for step. A frame whose header holds a value only
+// Python can judge (`nan`, `1_000`, a 400-digit integer) or a tab or `\r` is
+// handed back: Python reads that frame with its own code.
+
+/// `bytes.find(needle, from)`.
+fn find_at(h: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if from > h.len() || needle.len() > h.len() - from {
+        return None;
+    }
+    h[from..].windows(needle.len()).position(|w| w == needle).map(|i| from + i)
+}
+
+/// `_quoted_values`: (start, end) of each quoted value `="…"` or `='…'`.
+fn quoted_values(h: &[u8]) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    let mut a = find_at(h, b"=\"", 0);
+    let mut b = find_at(h, b"='", 0);
+    loop {
+        if matches!(a, Some(x) if x < pos) {
+            a = find_at(h, b"=\"", pos);
+        }
+        if matches!(b, Some(x) if x < pos) {
+            b = find_at(h, b"='", pos);
+        }
+        let opener = match (a, b) {
+            (None, None) => return spans,
+            (Some(x), None) | (None, Some(x)) => x,
+            (Some(x), Some(y)) => x.min(y),
+        };
+        let quote = h[opener + 1];
+        let end = if h.get(opener + 2..).is_some_and(|t| t.starts_with(b"_JSON ")) {
+            // JSON text holds many \" inside; after a ] or } only the closing quote can follow.
+            let x = find_at(h, &[b']', quote], opener + 2);
+            let y = find_at(h, &[b'}', quote], opener + 2);
+            match (x, y) {
+                (None, None) => None,
+                (Some(e), None) | (None, Some(e)) => Some(e + 1),
+                (Some(e), Some(f)) => Some(e.min(f) + 1),
+            }
+        } else {
+            let mut end = find_at(h, &[quote], opener + 2);
+            while let Some(e) = end {
+                if e == 0 || h[e - 1] != b'\\' {
+                    break;
+                }
+                let (mut slashes, mut k) = (0, e - 1);
+                while k > opener && h[k] == b'\\' {
+                    slashes += 1;
+                    k -= 1;
+                }
+                if slashes % 2 == 0 {
+                    break;
+                }
+                end = find_at(h, &[quote], e + 1);
+            }
+            end
+        };
+        let Some(end) = end else { return spans };
+        spans.push((opener + 1, end + 1));
+        pos = end + 1;
+    }
+}
+
+/// What a header value gives, as `header_energies` reads it.
+enum EnergyValue {
+    Set(f64),
+    Skip,
+    Python,
+}
+
+fn energy_value(v: &[u8]) -> EnergyValue {
+    if v.is_empty() || v.starts_with(b"_JSON ") {
+        return EnergyValue::Skip;
+    }
+    if int_text(v) {
+        // float(int(v)): a zero has no sign; beyond 300 digits Python raises.
+        if v.len() > 300 {
+            return EnergyValue::Python;
+        }
+        return match as_str(v).parse::<f64>() {
+            Ok(x) => EnergyValue::Set(if x == 0.0 { 0.0 } else { x }),
+            Err(_) => EnergyValue::Python,
+        };
+    }
+    if float_text(v) {
+        return match as_str(v).parse::<f64>() {
+            Ok(x) => EnergyValue::Set(x),
+            Err(_) => EnergyValue::Python,
+        };
+    }
+    // Only these bytes can make text Python's float() reads (`nan`, `inf`,
+    // `infinity`, `1_0`, ` 5`); text with any other byte is no number.
+    let maybe = |b: &u8| b.is_ascii_digit() || b"+-._eEiInNfFtTyYaA".contains(b) || *b <= b' ';
+    if v.iter().all(maybe) {
+        EnergyValue::Python
+    } else {
+        EnergyValue::Skip
+    }
+}
+
+fn energy_key(k: &[u8]) -> bool {
+    !k.is_empty() && (k[0].is_ascii_alphabetic() || k[0] == b'_') && k.iter().all(|&b| word(b))
+}
+
+/// `header_energies(h)` as `(key, value)` in the order Python's dict holds
+/// them, or None when Python must read this header.
+fn header_energies(h: &[u8], per_config: &HashSet<Vec<u8>>) -> Option<Vec<(Vec<u8>, f64)>> {
+    let low = h.to_ascii_lowercase();
+    let mut out: Vec<(Vec<u8>, f64)> = Vec::new();
+    let Some(mut at) = find_at(&low, b"energy", 0) else { return Some(out) };
+    if !h.contains(&b'=') {
+        return Some(out);
+    }
+    if h.contains(&b'\t') || h.contains(&b'\r') {
+        return None;
+    }
+    let spans = quoted_values(h);
+    loop {
+        let mut nxt = at + 6;
+        let key_start = h[..at].iter().rposition(|&b| b == b' ').map_or(0, |p| p + 1);
+        let eq = find_at(h, b"=", at);
+        let space = find_at(h, b" ", at);
+        let inside = spans.iter().any(|&(a, b)| a < key_start && key_start < b);
+        if let Some(eq) = eq {
+            if space.is_none_or(|s| eq < s) && !inside {
+                let key = &h[key_start..eq];
+                if energy_key(key) && !(key != b"energy" && per_config.contains(key)) {
+                    let next = h.get(eq + 1).copied();
+                    let value: Option<&[u8]> = if next == Some(b'"') || next == Some(b'\'') {
+                        let q = next.unwrap();
+                        let raw = match find_at(h, &[q], eq + 2) {
+                            Some(close) => &h[eq + 2..close],
+                            None => &h[0..0],
+                        };
+                        if raw.contains(&b'\\') { None } else { Some(raw) }
+                    } else {
+                        let end = find_at(h, b" ", eq + 1).unwrap_or(h.len());
+                        let raw = &h[eq + 1..end];
+                        if raw.first().is_some_and(|&c| c == b'{' || c == b'[') {
+                            None
+                        } else {
+                            let keep = raw.iter().rposition(|&b| !line_space(b)).map_or(0, |p| p + 1);
+                            Some(&raw[..keep])
+                        }
+                    };
+                    if let Some(v) = value {
+                        match energy_value(v) {
+                            EnergyValue::Set(x) => match out.iter_mut().find(|(k, _)| k == key) {
+                                Some(slot) => slot.1 = x,
+                                None => out.push((key.to_vec(), x)),
+                            },
+                            EnergyValue::Skip => {}
+                            EnergyValue::Python => return None,
+                        }
+                    }
+                }
+                nxt = nxt.max(eq);
+            }
+        }
+        match find_at(&low, b"energy", nxt) {
+            Some(x) => at = x,
+            None => return Some(out),
+        }
+    }
+}
+
+/// One frame's energies, or None for Python: its header is the line after
+/// the one at `start`, as `XyzReader.energies` takes it.
+fn frame_energies(data: &[u8], start: usize, per_config: &HashSet<Vec<u8>>) -> Option<Vec<(Vec<u8>, f64)>> {
+    let nl = data.get(start..)?.iter().position(|&b| b == b'\n')? + start;
+    let head = nl + 1;
+    let end = data[head..].iter().position(|&b| b == b'\n').map_or(data.len(), |i| head + i);
+    header_energies(&data[head..end], per_config)
+}
+
+/// Energies of a run of frames: per name, its first (frame, place in that
+/// frame's header) and its values; and the frames Python must read.
+#[derive(Default)]
+struct EnergyPart {
+    names: Vec<Vec<u8>>,
+    first: Vec<(usize, usize)>,
+    values: Vec<Vec<(usize, f64)>>,
+    python: Vec<i64>,
+}
+
+fn energies_of(data: &[u8], starts: &[u64], from: usize, per_config: &HashSet<Vec<u8>>) -> EnergyPart {
+    let mut part = EnergyPart::default();
+    let mut index: HashMap<Vec<u8>, usize> = HashMap::new();
+    for (j, &s) in starts.iter().enumerate() {
+        let frame = from + j;
+        let Some(items) = frame_energies(data, s as usize, per_config) else {
+            part.python.push(frame as i64);
+            continue;
+        };
+        for (rank, (key, value)) in items.into_iter().enumerate() {
+            let k = *index.entry(key.clone()).or_insert_with(|| {
+                part.names.push(key);
+                part.first.push((frame, rank));
+                part.values.push(Vec::new());
+                part.names.len() - 1
+            });
+            part.values[k].push((frame, value));
+        }
+    }
+    part
+}
+
+/// `XyzReader.energies(path, starts)` on `threads` threads: `(names, firsts,
+/// columns, python)`. `names` in the order they first appear, `firsts[i]` =
+/// (frame, place in its header) where name i first appears, `columns[i]`
+/// one float per frame (NaN where it has none). `python`: the frames whose
+/// headers Python must read (their values here are NaN). `per_config`: ASE's
+/// per-frame property names (not energies, except `energy`).
+#[pyfunction]
+#[pyo3(signature = (path, starts, per_config, threads=1))]
+#[allow(clippy::type_complexity)]
+fn energies<'py>(
+    py: Python<'py>,
+    path: &str,
+    starts: PyReadonlyArray1<u64>,
+    per_config: Vec<String>,
+    threads: usize,
+) -> PyResult<(Vec<String>, Vec<(usize, usize)>, Vec<Bound<'py, PyArray1<f64>>>, Bound<'py, PyArray1<i64>>)> {
+    let starts = starts.as_slice()?;
+    let n = starts.len();
+    let file = std::fs::File::open(path)?;
+    let empty = file.metadata()?.len() == 0;
+    let per_config: HashSet<Vec<u8>> = per_config.into_iter().map(String::into_bytes).collect();
+    let mapped = if empty || n == 0 { None } else { Some(unsafe { Mmap::map(&file)? }) };
+    let data: &[u8] = mapped.as_deref().unwrap_or(&[]);
+    let (names, first, columns, python) = py.allow_threads(|| {
+        let threads = threads.max(1);
+        let per = n.div_ceil(threads * 4).max(1);
+        let pieces: Vec<usize> = (0..n).step_by(per).collect();
+        let one = |a: &usize| energies_of(data, &starts[*a..(*a + per).min(n)], *a, &per_config);
+        let parts: Vec<EnergyPart> = match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
+            Ok(pool) if threads > 1 && pieces.len() > 1 => pool.install(|| pieces.par_iter().map(one).collect()),
+            _ => pieces.iter().map(one).collect(),
+        };
+        // Parts come in frame order, so a name's first part holds its first frame.
+        let mut index: HashMap<Vec<u8>, usize> = HashMap::new();
+        let (mut names, mut first, mut columns, mut python) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for part in parts {
+            for ((name, f), values) in part.names.into_iter().zip(part.first).zip(part.values) {
+                let k = *index.entry(name.clone()).or_insert_with(|| {
+                    names.push(String::from_utf8_lossy(&name).into_owned());
+                    first.push(f);
+                    columns.push(vec![f64::NAN; n]);
+                    names.len() - 1
+                });
+                for (frame, v) in values {
+                    columns[k][frame] = v;
+                }
+            }
+            python.extend(part.python);
+        }
+        (names, first, columns, python)
+    });
+    let columns = columns.into_iter().map(|c| PyArray1::from_vec_bound(py, c)).collect();
+    Ok((names, first, columns, PyArray1::from_vec_bound(py, python)))
+}
+
 #[pymodule]
 fn _ffast_xyz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(contract, m)?)?;
     m.add_function(wrap_pyfunction!(parse_into, m)?)?;
     m.add_function(wrap_pyfunction!(find_frames, m)?)?;
+    m.add_function(wrap_pyfunction!(energies, m)?)?;
     m.add("FIND_MORE", FIND_MORE)?;
     m.add("FIND_END", FIND_END)?;
     m.add("FIND_PYTHON", FIND_PYTHON)?;
