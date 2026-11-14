@@ -3,6 +3,7 @@ reader's ``parse_into`` once per group of frames, joins the header values as
 ``parse``'s batches join, and hands the file to ``parse`` on ``NotFast``.
 The fast parser here is a toy in Python; no compiled package is needed."""
 import logging
+import types
 
 import numpy as np
 import pytest
@@ -240,3 +241,64 @@ def test_fast_parser_usable_follows_the_package_and_its_contract(monkeypatch):
     monkeypatch.setitem(sys.modules, "ffast_xyz", None)          # import fails
     monkeypatch.setattr(text, "_fast_usable", None)
     assert text.fast_parser_usable() is False
+
+
+# ── the warnings (ADR 0100, decision 5) ────────────────────────────────────
+
+def _popups(caplog):
+    return [r for r in caplog.records
+            if r.levelno >= logging.WARNING and getattr(r, "popup", True) is not False]
+
+
+@pytest.mark.parametrize("missing, words", [(True, "Fast reader not installed"),
+                                            (False, "too old for this FFAST")])
+def test_no_usable_package_pops_up_once_per_start_not_per_file(tmp_path, monkeypatch, caplog, missing, words):
+    monkeypatch.setattr(text, "_fast_missing", missing)
+    monkeypatch.setattr(text, "_fast_warned", False)
+    path = _file(tmp_path, _frames(5))
+    with caplog.at_level(logging.WARNING, logger="FFAST"):
+        _read(path, fast=False)
+        _read(path, fast=False)
+    popups = _popups(caplog)
+    assert len(popups) == 1
+    assert words in popups[0].getMessage() and "`ffast-xyz`" in popups[0].getMessage()
+    assert ToyTextReader.parsed                                  # the Python parser still read it
+
+
+def test_a_reader_without_parse_into_gives_no_popup(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(text, "_fast_warned", False)
+    monkeypatch.setattr(text, "fast_parser_usable", lambda: False)
+    with caplog.at_level(logging.WARNING, logger="FFAST"):
+        chunks.read_arrays(ToyTextReader, write_toy(tmp_path / "b.toyt", _frames(4)), use_cache=False)
+    assert _popups(caplog) == []
+
+
+def test_a_usable_package_gives_no_popup(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(text, "_fast_warned", False)
+    with caplog.at_level(logging.WARNING, logger="FFAST"):
+        _read(_file(tmp_path, _frames(5)))
+    assert _popups(caplog) == []
+
+
+def test_a_handed_over_file_warns_in_the_log_and_the_status_without_a_popup(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(text, "_fast_warned", False)
+    seen = []
+    path = _file(tmp_path, _frames(10, lambda i, f: f.update(fast="no") if i == 7 else None))
+    with caplog.at_level(logging.WARNING, logger="FFAST"):
+        _read(path, batch=3, on_handover=seen.append)
+    note = "a.toyq: read with the slower Python parser (frame 7: the toy says no)"
+    assert seen == [note]
+    assert note in caplog.text and _popups(caplog) == []
+
+
+def test_the_status_keeps_the_handover_in_the_progress_text_that_follows():
+    from ffast.core.loading_coordinator import LoadingCoordinator
+    sent = []
+    fake = types.SimpleNamespace(_progress=lambda task, msg, **kw: sent.append(msg))
+    report = LoadingCoordinator._readProgress(fake, "/x/a.xyz", 7)
+    report(1, 10)
+    report.handed_over("a.xyz: read with the slower Python parser (why)")
+    report(10, 10)
+    assert sent == ["Reading a.xyz: 1 of 10 frames…",
+                    "a.xyz: read with the slower Python parser (why)…",
+                    "a.xyz: read with the slower Python parser (why): 10 of 10 frames…"]

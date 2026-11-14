@@ -141,13 +141,21 @@ class LoadingCoordinator:
         milliseconds; a message each filled the page's queue on MeluXina."""
         name = os.path.basename(path)
         last = [None]
+        lead = [f"Reading {name}"]
 
         def report(done, total):
             now = time.monotonic()
             if done < total and last[0] is not None and now - last[0] < 1.0:
                 return
             last[0] = now
-            self._progress(taskID, f"Reading {name}: {done:,} of {total:,} frames…")
+            self._progress(taskID, f"{lead[0]}: {done:,} of {total:,} frames…")
+
+        def handed_over(note):
+            """The fast parser gave the file up (ADR 0100): say so, and keep
+            saying it in the progress text that follows."""
+            lead[0] = note
+            self._progress(taskID, f"{note}…")
+        report.handed_over = handed_over
         return report
 
     def _resolveLoad(self, kind, path, typeName, popup=True):
@@ -736,8 +744,10 @@ class LoadingCoordinator:
 
         self.prepareFrameIndex(path, taskID)    # shares the Load dialog's scan, and reports it
         progress = self._readProgress(path, taskID) if taskID is not None else None
+        handed = getattr(progress, "handed_over", None)
         try:
-            return readerClass, chunks.read_arrays(readerClass, path, progress=progress, **kwargs)
+            return readerClass, chunks.read_arrays(readerClass, path, progress=progress,
+                                                   on_handover=handed, **kwargs)
         except NotFast as exc:
             other = registry.get(getattr(readerClass, "fallback", None) or "")
             if other is None:

@@ -389,9 +389,10 @@ class _Joined:
 
 
 def read_level2(reader_class, path, *, stride=0, select=None, progress=None, workers=None,
-                batch=None, use_cache=True):
+                batch=None, use_cache=True, on_handover=None):
     """The kept frames of ``path`` through a Level 2 reader: ``(arrays,
-    contents, frames, n_file_frames)``."""
+    contents, frames, n_file_frames)``. ``on_handover(text)`` gets the load's
+    status text when the fast parser hands the file over (ADR 0100)."""
     name = os.path.basename(path)
     reader = reader_class(path)
     contents = dict(reader.contents() or {})
@@ -420,13 +421,18 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
     kept_counts = counts[index]
 
     arrays = None
-    if callable(getattr(reader_class, "parse_into", None)) and fast_parser_usable():
-        try:
-            arrays = _read_fast(reader_class, path, contents, frames, spans_start, spans_end,
-                                kept_counts, progress, workers, batch)
-        except NotFast as exc:
-            logger.warning("%s: read with the slower Python parser (%s)", name, exc,
-                           extra={"popup": False})
+    if callable(getattr(reader_class, "parse_into", None)):
+        if not fast_parser_usable():
+            _warn_no_fast_parser()
+        else:
+            try:
+                arrays = _read_fast(reader_class, path, contents, frames, spans_start, spans_end,
+                                    kept_counts, progress, workers, batch)
+            except NotFast as exc:
+                note = f"{name}: read with the slower Python parser ({exc})"
+                logger.warning("%s", note, extra={"popup": False})
+                if on_handover:
+                    on_handover(note)
     if arrays is None:
         arrays = _read_python(reader_class, path, frames, spans_start, spans_end, kept_counts,
                               progress, workers, batch)
@@ -531,20 +537,39 @@ FAST_CONTRACT = 1              # the ffast_xyz.CONTRACT this FFAST expects
 GROUPS = 50                    # a group is 1/GROUPS of the kept frames ...
 GROUP_BYTES = 256 * 2**20      # ... and at most this much text
 _fast_usable = None
+_fast_missing = True           # when not usable: not installed (True) or too old (False)
+_fast_warned = False           # the pop-up was sent (once per server start)
 
 
 def fast_parser_usable():
     """Whether the compiled package ``ffast_xyz`` imports and follows the
     ``parse_into`` contract this FFAST expects. Checked once per process."""
-    global _fast_usable
+    global _fast_usable, _fast_missing
     if _fast_usable is None:
         try:
             import ffast_xyz
         except ImportError:
-            _fast_usable = False
+            _fast_usable, _fast_missing = False, True
         else:
             _fast_usable = getattr(ffast_xyz, "CONTRACT", None) == FAST_CONTRACT
+            _fast_missing = False
     return _fast_usable
+
+
+def _warn_no_fast_parser():
+    """The pop-up of ADR 0100 decision 5: once per server start, the first
+    time a reader with ``parse_into`` reads a file without a usable package."""
+    global _fast_warned
+    with _lock:
+        if _fast_warned:
+            return
+        _fast_warned = True
+    if _fast_missing:
+        why, fix = "Fast reader not installed", "Install"
+    else:
+        why, fix = "Fast reader is too old for this FFAST", "Update"
+    logger.warning("%s: .xyz files load with the slower Python parser. %s `ffast-xyz` "
+                   "to load them up to 10× faster.", why, fix)
 
 
 def _groups(sizes, batch=None):
