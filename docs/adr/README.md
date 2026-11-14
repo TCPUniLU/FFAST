@@ -135,6 +135,7 @@ things came up.
 - [0096](0096-a-text-file-can-be-sampled-by-energy-at-load.md) A text file can be sampled by energy at load: even across energy bins or keeping the distribution, random with seed 42, a histogram preview; predictions read the same frames (proposed)
 - [0097](0097-every-reply-names-the-request-it-answers.md) Every reply names the request it answers: `id` on requests, `reply_to` on answers, one final reply, one error shape, no time limits; the browser notices a dropped connection and reconnects (proposed)
 - [0098](0098-the-desktop-client-is-removed.md) The desktop client is removed: everything Qt goes; seven small gaps stay listed; recovery tag `last-qt` (proposed)
+- [0099](0099-the-server-sends-the-points-a-plot-can-show.md) The server sends the points a plot can show: a large result is thinned on the server to the plot's pixels (line: first/lowest/highest/last per column; dots: one per 2 px cell) with frame numbers; small results still come whole; a zoom asks again; CSV fetches everything on click (proposed)
 
 ## Format
 

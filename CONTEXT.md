@@ -277,6 +277,14 @@ atom colouring, a subset following a plot's zoom, and Try's references to
 saved metrics all ask it. A metric result is the answer; the store is where
 answers are asked for.
 
+### Thinned view
+
+The points of a large metric result that a plot can show at its size: in each
+pixel column of a line its first, lowest, highest and last point; one dot
+per small cell of a scatter. Each point keeps its frame number, so a click
+still opens that structure. A zoom asks for a new thinned view. The full
+result stays with the server (ADR 0099).
+
 ### Missing result, needs a prediction
 
 When a metric over a whole dataset has no result, the server says why, as one
