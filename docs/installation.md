@@ -64,18 +64,31 @@ inference backends are declared in [pyproject.toml](../pyproject.toml).
 ### The fast .xyz reader
 
 `.xyz` and `.extxyz` files load up to 10× faster with the fast reader
-(`ffast-xyz`, written in Rust). It is not on PyPI: build it from this checkout
-with
+(`ffast-xyz`, written in Rust). It is not on PyPI. Install it with
 
 ```bash
 ffast install-fast-reader
 ```
 
-This needs [Rust](https://rustup.rs). The command finds it on `PATH`, in
-`$CARGO_HOME/bin` or in `~/.cargo/bin`, and installs the reader into the Python
-that runs FFAST. Without Rust it says so and changes nothing: FFAST works, and
-reads these files with the slower Python parser. Run it again after updating
-FFAST if FFAST says the fast reader is too old.
+The command downloads the ready-made reader for your computer from the
+[GitHub releases](https://github.com/TCPUniLU/FFAST/releases) (tags
+`ffast-xyz-v…`), checks it against the release's `SHA256SUMS`, and installs it
+into the Python that runs FFAST. When there is none for your computer, or no
+internet, it builds the reader from this checkout instead, which needs
+[Rust](https://rustup.rs): it finds Rust on `PATH`, in `$CARGO_HOME/bin` or in
+`~/.cargo/bin`.
+
+On a computer without internet (a cluster node), download the wheel for it
+from the release elsewhere, copy it over, and run
+`ffast install-fast-reader --wheel <file>`. `--from-source` skips the download.
+
+If none of this works, FFAST still runs and reads these files with the slower
+Python parser. Run the command again after updating FFAST if FFAST says the
+fast reader is too old.
+
+A new reader release is made by pushing a tag `ffast-xyz-v<version>`, where
+`<version>` is the one in `rust/ffast-xyz/Cargo.toml` and in `RELEASE` in
+`ffast/readers/install_fast.py`.
 
 ## Launch options
 
