@@ -1,5 +1,8 @@
-Status: Proposed 2026-11-13. Builds on the plot thinning in the browser
-(`thin.js`, 9627d5cc) and on result tags (afe25c92).
+Status: Accepted 2026-11-14, built (044ca2fe server, 25d3e54c page). Builds
+on the plot thinning in the browser (`thin.js`, 9627d5cc) and on result tags
+(afe25c92). Measured on shard_03 over the MeluXina tunnel (2026-11-14):
+energy shift 8–13 s / 74 MB → 0.5–0.6 s / 0.2 MB; zoom 4.1 s / 45 MB →
+0.23 s / 0.04 MB; first look 21.6 s / 74 MB → 13.6 s / 3 MB.
 
 # The server sends the points a plot can show
 
