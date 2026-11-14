@@ -171,6 +171,30 @@ def test_many_frames_on_several_threads_keep_the_order_of_first_appearance(tmp_p
     assert handed[-1] == len(range(0, 3000, 97))
 
 
+def test_a_header_longer_than_the_read_window_is_read_by_python(tmp_path, monkeypatch, handed):
+    long = f'note="{"x" * (ffast_window() + 10)}" energy=-7.5'
+    path = _write(tmp_path, ["energy=1", long, "energy=3"])
+    python = _energies(path, False, monkeypatch)
+    _same(python, _energies(path, True, monkeypatch, 4))
+    assert handed == [1] and python["energy"][1] == -7.5
+
+
+def test_the_last_header_without_a_line_end_is_read(tmp_path, monkeypatch, handed):
+    path = tmp_path / "case.xyz"
+    path.write_bytes(b"1\nenergy=1\nH 0 0 0\n1\nenergy=2.5")   # ends inside the last frame's header
+    starts = np.array([0, len(b"1\nenergy=1\nH 0 0 0\n")])
+    got = {}
+    for fast in (False, True):
+        monkeypatch.setattr(text, "fast_parser_usable", lambda fast=fast: fast)
+        got[fast] = XyzReader.energies(str(path), starts)
+    _same(got[False], got[True])
+    assert got[True]["energy"].tolist() == [1.0, 2.5] and handed == [0]
+
+
+def ffast_window():
+    return 64 << 10        # ENERGY_WINDOW in rust/ffast-xyz/src/lib.rs
+
+
 def test_frames_asked_for_out_of_order_and_twice(tmp_path, monkeypatch):
     path = _write(tmp_path, ["energy=1", "b_energy=2", "energy=nan a_energy=3", "energy=4"])
     starts = frame_index.scan(str(path)).starts[:-1][[3, 2, 1, 3, 0]]

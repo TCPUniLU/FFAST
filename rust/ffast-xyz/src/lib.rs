@@ -22,7 +22,6 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use memmap2::Mmap;
 use numpy::{
     PyArray1, PyArrayMethods, PyReadonlyArray1, PyReadwriteArray1, PyReadwriteArray2,
     PyReadwriteArray3, PyReadwriteArrayDyn, PyUntypedArrayMethods,
@@ -527,7 +526,8 @@ fn frame_runs(starts: &[u64], ends: &[u64]) -> (Vec<(u64, u64)>, Vec<usize>) {
     let mut before = 0u64; // bytes of earlier runs
     for (&s, &e) in starts.iter().zip(ends) {
         match runs.last_mut() {
-            Some((a, b)) if s >= *b && s - *b <= READ_GAP => *b = (*b).max(e),
+            // Sorted starts; spans may overlap (the energies' windows).
+            Some((a, b)) if s >= *a && s <= b.saturating_add(READ_GAP) => *b = (*b).max(e),
             _ => {
                 if let Some(&(a, b)) = runs.last() {
                     before += b - a;
@@ -1376,45 +1376,57 @@ fn header_energies(h: &[u8], per_config: &HashSet<Vec<u8>>) -> Option<Vec<(Vec<u
     }
 }
 
-/// One frame's energies, or None for Python: its header is the line after
-/// the one at `start`, as `XyzReader.energies` takes it.
-fn frame_energies(data: &[u8], start: usize, per_config: &HashSet<Vec<u8>>) -> Option<Vec<(Vec<u8>, f64)>> {
-    let nl = data.get(start..)?.iter().position(|&b| b == b'\n')? + start;
-    let head = nl + 1;
-    let end = data[head..].iter().position(|&b| b == b'\n').map_or(data.len(), |i| head + i);
-    header_energies(&data[head..end], per_config)
+/// Bytes read from each frame's start: its count line and header line. A
+/// header line running past them is read by Python.
+const ENERGY_WINDOW: u64 = 64 << 10;
+/// The frames read at once span at most this many bytes of the file.
+const ENERGY_GROUP: u64 = 256 << 20;
+
+/// One frame's energies, or None for Python: `win` is the file from the
+/// frame's start (to the file's end when `at_eof`); its header is the line
+/// after the first, as `XyzReader.energies` takes it.
+fn window_energies(win: &[u8], at_eof: bool, per_config: &HashSet<Vec<u8>>) -> Option<Vec<(Vec<u8>, f64)>> {
+    let head = win.iter().position(|&b| b == b'\n')? + 1;
+    let end = match win[head..].iter().position(|&b| b == b'\n') {
+        Some(i) => head + i,
+        None if at_eof => win.len(),
+        None => return None,
+    };
+    header_energies(&win[head..end], per_config)
 }
 
-/// Energies of a run of frames: per name, its first (frame, place in that
-/// frame's header) and its values; and the frames Python must read.
-#[derive(Default)]
-struct EnergyPart {
-    names: Vec<Vec<u8>>,
+/// The energies of every frame, joined in frame order: each name's first
+/// (frame, place in that frame's header), a column per name, and the frames
+/// Python must read.
+struct EnergyJoin {
+    n: usize,
+    index: HashMap<Vec<u8>, usize>,
+    names: Vec<String>,
     first: Vec<(usize, usize)>,
-    values: Vec<Vec<(usize, f64)>>,
+    columns: Vec<Vec<f64>>,
     python: Vec<i64>,
 }
 
-fn energies_of(data: &[u8], starts: &[u64], from: usize, per_config: &HashSet<Vec<u8>>) -> EnergyPart {
-    let mut part = EnergyPart::default();
-    let mut index: HashMap<Vec<u8>, usize> = HashMap::new();
-    for (j, &s) in starts.iter().enumerate() {
-        let frame = from + j;
-        let Some(items) = frame_energies(data, s as usize, per_config) else {
-            part.python.push(frame as i64);
-            continue;
+impl EnergyJoin {
+    fn add(&mut self, frame: usize, got: Option<Vec<(Vec<u8>, f64)>>) {
+        let Some(items) = got else {
+            self.python.push(frame as i64);
+            return;
         };
         for (rank, (key, value)) in items.into_iter().enumerate() {
-            let k = *index.entry(key.clone()).or_insert_with(|| {
-                part.names.push(key);
-                part.first.push((frame, rank));
-                part.values.push(Vec::new());
-                part.names.len() - 1
-            });
-            part.values[k].push((frame, value));
+            let k = match self.index.get(&key) {
+                Some(&k) => k,
+                None => {
+                    self.names.push(String::from_utf8_lossy(&key).into_owned());
+                    self.first.push((frame, rank));
+                    self.columns.push(vec![f64::NAN; self.n]);
+                    self.index.insert(key, self.names.len() - 1);
+                    self.names.len() - 1
+                }
+            };
+            self.columns[k][frame] = value;
         }
     }
-    part
 }
 
 /// `XyzReader.energies(path, starts)` on `threads` threads: `(names, firsts,
@@ -1436,40 +1448,56 @@ fn energies<'py>(
     let starts = starts.as_slice()?;
     let n = starts.len();
     let file = std::fs::File::open(path)?;
-    let empty = file.metadata()?.len() == 0;
+    let size = file.metadata()?.len();
     let per_config: HashSet<Vec<u8>> = per_config.into_iter().map(String::into_bytes).collect();
-    let mapped = if empty || n == 0 { None } else { Some(unsafe { Mmap::map(&file)? }) };
-    let data: &[u8] = mapped.as_deref().unwrap_or(&[]);
-    let (names, first, columns, python) = py.allow_threads(|| {
+    let join = py.allow_threads(|| -> std::io::Result<EnergyJoin> {
         let threads = threads.max(1);
-        let per = n.div_ceil(threads * 4).max(1);
-        let pieces: Vec<usize> = (0..n).step_by(per).collect();
-        let one = |a: &usize| energies_of(data, &starts[*a..(*a + per).min(n)], *a, &per_config);
-        let parts: Vec<EnergyPart> = match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
-            Ok(pool) if threads > 1 && pieces.len() > 1 => pool.install(|| pieces.par_iter().map(one).collect()),
-            _ => pieces.iter().map(one).collect(),
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(std::io::Error::other)?;
+        let mut join = EnergyJoin {
+            n, index: HashMap::new(), names: Vec::new(), first: Vec::new(), columns: Vec::new(), python: Vec::new(),
         };
-        // Parts come in frame order, so a name's first part holds its first frame.
-        let mut index: HashMap<Vec<u8>, usize> = HashMap::new();
-        let (mut names, mut first, mut columns, mut python) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        for part in parts {
-            for ((name, f), values) in part.names.into_iter().zip(part.first).zip(part.values) {
-                let k = *index.entry(name.clone()).or_insert_with(|| {
-                    names.push(String::from_utf8_lossy(&name).into_owned());
-                    first.push(f);
-                    columns.push(vec![f64::NAN; n]);
-                    names.len() - 1
-                });
-                for (frame, v) in values {
-                    columns[k][frame] = v;
+        // Frames in file order, read a group at a time with plain reads.
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by_key(|&i| starts[i]);
+        let in_order = order.iter().enumerate().all(|(j, &i)| i == j);
+        let mut kept: Vec<Option<Option<Vec<(Vec<u8>, f64)>>>> = Vec::new(); // frames asked for out of order
+        if !in_order {
+            kept.resize_with(n, || None);
+        }
+        let window = |i: usize| (starts[i].min(size), starts[i].saturating_add(ENERGY_WINDOW).min(size));
+        let mut g = 0;
+        while g < n {
+            let first = window(order[g]).0;
+            let mut h = g + 1;
+            while h < n && window(order[h]).1 - first <= ENERGY_GROUP {
+                h += 1;
+            }
+            let idx = &order[g..h];
+            let (ws, we): (Vec<u64>, Vec<u64>) = idx.iter().map(|&i| window(i)).unzip();
+            let (runs, at) = frame_runs(&ws, &we);
+            let data = read_runs(&file, &runs, threads)?;
+            let got: Vec<_> = pool.install(|| {
+                (0..idx.len())
+                    .into_par_iter()
+                    .map(|j| window_energies(&data[at[j]..at[j] + (we[j] - ws[j]) as usize], we[j] == size, &per_config))
+                    .collect()
+            });
+            for (j, frame_got) in got.into_iter().enumerate() {
+                if in_order {
+                    join.add(idx[j], frame_got);
+                } else {
+                    kept[idx[j]] = Some(frame_got);
                 }
             }
-            python.extend(part.python);
+            g = h;
         }
-        (names, first, columns, python)
-    });
-    let columns = columns.into_iter().map(|c| PyArray1::from_vec_bound(py, c)).collect();
-    Ok((names, first, columns, PyArray1::from_vec_bound(py, python)))
+        for (frame, frame_got) in kept.into_iter().enumerate() {
+            join.add(frame, frame_got.unwrap_or(None));
+        }
+        Ok(join)
+    })?;
+    let columns = join.columns.into_iter().map(|c| PyArray1::from_vec_bound(py, c)).collect();
+    Ok((join.names, join.first, columns, PyArray1::from_vec_bound(py, join.python)))
 }
 
 #[pymodule]
