@@ -272,9 +272,10 @@ class MolWriter:
         energies = next((v for k, v in chunk.items() if k.startswith("energy:")), None)
         start = 0
         for k, count in enumerate(chunk["n_atoms"]):
-            self.out.write(f"{count}\n{0.0 if energies is None else energies[k]!r}\n")
+            # float(): NumPy 2 writes repr(np.float64(1.5)) as "np.float64(1.5)".
+            self.out.write(f"{count}\n{0.0 if energies is None else float(energies[k])!r}\n")
             for z, xyz in zip(chunk["numbers"][start:start + count], chunk["positions"][start:start + count]):
-                self.out.write(f"{chemical_symbols[z]} {xyz[0]!r} {xyz[1]!r} {xyz[2]!r}\n")
+                self.out.write(f"{chemical_symbols[z]} {float(xyz[0])!r} {float(xyz[1])!r} {float(xyz[2])!r}\n")
             start += count
 
     def close(self):

@@ -97,7 +97,7 @@ def test_a_sampled_xyz_load_bins_per_atom_when_atom_counts_differ(tmp_path):
     per_atom = rng.uniform(-5, -4, 120)
     counts = [2 + (i % 3) for i in range(120)]
     for i, (e, n) in enumerate(zip(per_atom, counts)):
-        lines += [str(n), f"energy={e * n!r} Properties=species:S:1:pos:R:3"]
+        lines += [str(n), f"energy={float(e * n)!r} Properties=species:S:1:pos:R:3"]
         lines += [f"H {i} {a} 0.0" for a in range(n)]
     path = tmp_path / "run.xyz"
     path.write_text("\n".join(lines) + "\n")

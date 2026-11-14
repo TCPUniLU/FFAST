@@ -89,3 +89,13 @@ def test_a_frame_in_another_atom_order_is_refused(bundle, tmp_path, records, cap
 def test_an_index_outside_the_file_is_refused(bundle, tmp_path, records, capsys):
     rc, _ = _run(bundle, tmp_path, "--index", "5")
     assert rc == 1 and "outside" in capsys.readouterr().err
+
+
+def test_the_box_lines_are_plain_numbers_lammps_can_read():
+    """NumPy 2 writes repr(np.float64(-10.0)) as "np.float64(-10.0)"."""
+    from ffast.live.data_file import data_file_text
+
+    text = data_file_text(np.array([[0.0, 0.5, 1.0], [1.0, 2.0, 3.0]]), ["H", "H"], ["H"], "t")
+    box = [line.split() for line in text.splitlines() if line.endswith("hi")]
+    assert [b[2:] for b in box] == [["xlo", "xhi"], ["ylo", "yhi"], ["zlo", "zhi"]]
+    assert [[float(b[0]), float(b[1])] for b in box] == [[-10.0, 11.0], [-9.5, 12.0], [-9.0, 13.0]]

@@ -40,7 +40,8 @@ def data_file_text(positions, symbols: list[str], elements: list[str], title: st
     lines = [title.replace("\n", " "), "",
              f"{len(pos)} atoms", f"{len(elements)} atom types", ""]
     for (a, b), axis in zip(zip(lo, hi), "xyz"):
-        lines.append(f"{a!r} {b!r} {axis}lo {axis}hi")
+        # float(): NumPy 2 writes repr(np.float64(1.5)) as "np.float64(1.5)".
+        lines.append(f"{float(a)!r} {float(b)!r} {axis}lo {axis}hi")
     lines += ["", "Masses", ""]
     for t, e in enumerate(elements, start=1):
         lines.append(f"{t} {atomic_masses[atomic_numbers[e]]:.6f}  # {e}")
