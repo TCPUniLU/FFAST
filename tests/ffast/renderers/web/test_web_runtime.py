@@ -7194,9 +7194,14 @@ async def test_web_only_the_rows_with_peak_labels_grow(shared_prediction_server,
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await _open_analysis_tab(page, "Basic Errors")
-            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            # Each timeline's Peaks box exists once it is drawn: a box not yet
+            # there was never ticked, and its labels never came (flaky-tests.md).
+            for title in ("Energy MAE timeline", "Forces MAE timeline", "Forces RMSE timeline"):
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg=title, timeout=25000)
             # labels start off: tick every timeline's, as they once all were
-            for box in await page.locator(".tabpanel.active .peaks-toggle input").all():
+            boxes = page.locator(".tabpanel.active .peaks-toggle input")
+            await expect(boxes).to_have_count(3)
+            for box in await boxes.all():
                 await box.check()
             # every timeline draws its labels (each grows its row) before the rows are measured
             for title in ("Energy MAE timeline", "Forces MAE timeline", "Forces RMSE timeline"):
