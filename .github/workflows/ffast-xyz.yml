@@ -1,0 +1,91 @@
+name: ffast-xyz
+
+# Builds the wheels of the fast .xyz parser (rust/ffast-xyz, ADR 0100).
+# A tag `ffast-xyz-v<version>` (the version in rust/ffast-xyz/Cargo.toml)
+# also makes a GitHub Release with the wheels and their SHA256SUMS, which
+# `ffast install-fast-reader` downloads. Not published to PyPI.
+
+on:
+  push:
+    branches: [main, dev, 2ffast]
+    tags: ["ffast-xyz-v*"]
+    paths:
+      - "rust/ffast-xyz/**"
+      - ".github/workflows/ffast-xyz.yml"
+  pull_request:
+    paths:
+      - "rust/ffast-xyz/**"
+      - ".github/workflows/ffast-xyz.yml"
+  workflow_dispatch:
+
+jobs:
+  wheels:
+    name: wheel ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, os: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { name: linux-aarch64, os: ubuntu-latest, target: aarch64, manylinux: auto }
+          - { name: macos-arm64, os: macos-14, target: aarch64-apple-darwin, manylinux: "" }
+          - { name: macos-x86_64, os: macos-15-intel, target: x86_64-apple-darwin, manylinux: "" }
+          - { name: windows-x86_64, os: windows-latest, target: x64, manylinux: "" }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: rust/ffast-xyz
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist
+          sccache: "true"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.name }}
+          path: rust/ffast-xyz/dist/*.whl
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/ffast-xyz-v')
+    needs: wheels
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: The tag names the crate's version
+        run: |
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' rust/ffast-xyz/Cargo.toml | head -1)
+          tag="${GITHUB_REF_NAME#ffast-xyz-v}"
+          if [ "$crate" != "$tag" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $crate" >&2
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.whl > SHA256SUMS && cat SHA256SUMS
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/SHA256SUMS \
+            --title "ffast-xyz ${GITHUB_REF_NAME#ffast-xyz-v}" \
+            --notes "The fast .xyz reader for FFAST (ADR 0100). Install it with \`ffast install-fast-reader\`."

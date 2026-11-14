@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ffast-xyz"
+dynamic = ["version"]
+description = "Fast parser for extended-XYZ files, used by FFAST"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26"]
+
+[tool.maturin]
+module-name = "ffast_xyz._ffast_xyz"
+python-source = "python"
+features = ["pyo3/extension-module"]

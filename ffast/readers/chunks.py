@@ -57,7 +57,7 @@ def is_level2(reader_class) -> bool:
 
 def read_arrays(reader_class, path, *, stride=0, select=None, progress=None,
                 chunk_bytes=CHUNK_BYTES, first_frames=FIRST_CHUNK_FRAMES,
-                workers=None, batch=None, use_cache=True) -> Loaded:
+                workers=None, batch=None, use_cache=True, on_handover=None) -> Loaded:
     """Every ``stride``-th frame of ``path`` through ``reader_class``, joined.
 
     ``stride`` of 0, 1 or less keeps every frame. ``select(n_file_frames)``,
@@ -74,7 +74,7 @@ def read_arrays(reader_class, path, *, stride=0, select=None, progress=None,
         with reader_errors(reader_name, path):
             arrays, contents, frames, n_file = text.read_level2(
                 reader_class, path, stride=stride, select=select, progress=progress,
-                workers=workers, batch=batch, use_cache=use_cache)
+                workers=workers, batch=batch, use_cache=use_cache, on_handover=on_handover)
         return Loaded(arrays, contents, frames, n_file, reader_name)
     with reader_errors(reader_name, path):
         reader = reader_class(path)

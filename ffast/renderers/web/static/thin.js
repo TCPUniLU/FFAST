@@ -39,7 +39,9 @@ function ascending(xs) {
  * is not a number) keeps the gap, so the line still breaks there. */
 function lineColumns(xs, ys, from, to, x0, x1, columns, keep) {
   const span = x1 - x0;
-  let col = -1, first = -1, last = -1, lo = -1, hi = -1, gap = -1;
+  // NaN: no column yet. The point before a zoomed range is in column -1,
+  // which a start of -1 took for a run already open, and dropped.
+  let col = NaN, first = -1, last = -1, lo = -1, hi = -1, gap = -1;
   const flush = () => {
     if (first < 0) return;
     keep.add(first); keep.add(last);

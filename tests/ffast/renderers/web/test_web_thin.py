@@ -131,3 +131,62 @@ async def test_a_large_scatter_draws_few_dots_and_a_click_names_its_frame(static
     assert got["drawn"] < 60000
     assert got["clicked"] == 333333
     assert got["csv"] == 500000
+
+
+def _parity_cases():
+    """Named arrays (each sent to the page once) and the cases that use them."""
+    import numpy as np
+    rng = np.random.default_rng(7)
+    n = 30_000
+    x = np.arange(n, dtype=float)
+    y = np.sin(x / 700) + rng.normal(0, 0.1, n)
+    y[rng.integers(0, n, 40)] = np.nan
+    y[10_000:10_300] = np.nan                       # a whole gap
+    y[15_000:15_500] = 1.0                          # a plateau: ties
+    xu = np.cumsum(rng.uniform(0.1, 3.0, n))        # uneven x
+    px = np.concatenate([rng.normal(0, 1, n), [np.nan] * 50, [25.0]])
+    py = np.concatenate([px[:n] + rng.normal(0, 0.2, n), [1.0] * 50, [-30.0]])
+    arrays = {"x": x, "y": y, "xu": xu, "px": px, "py": py}
+    lines = [{"x": "x", "y": "y", "range": r, "w": 700}
+             for r in [None, [1000, 1100], [5000, 20_000], [20_000, 5000], [-5, 15_000], [29_000, 40_000]]]
+    lines.append({"x": "x", "y": "y", "range": [2500, 12_500], "w": 700.5})
+    lines.append({"x": "xu", "y": "y", "range": [float(xu[4500]), float(xu[20500]) + 0.37], "w": 640})
+    points = [{"x": "px", "y": "py", "xr": xr, "yr": yr, "w": 700, "h": 300}
+              for xr, yr in [(None, None), ([-1, 1], None), ([-1, 1], [-0.5, 0.5]), ([1, -1], [0.5, -0.5])]]
+    return arrays, lines, points
+
+
+async def test_the_page_and_the_server_thin_to_the_same_points(static_origin):
+    """ADR 0099: small results are thinned in the page, large ones on the
+    server; both must keep the same points, or a plot changes its look when
+    a result crosses the size limit."""
+    import math
+    from ffast.session.thinning import thin_line, thin_points
+
+    arrays, lines, points = _parity_cases()
+    js = lambda a: [None if math.isnan(v) else v for v in a.tolist()]
+    payload = {"arrays": {k: js(v) for k, v in arrays.items()}, "lines": lines, "points": points}
+    script = f"""async (p) => {{
+      const th = await import('{static_origin}/thin.js');
+      const a = Object.fromEntries(Object.entries(p.arrays).map(([k, v]) => [k, v.map((u) => (u === null ? NaN : u))]));
+      const out = (idx) => (idx ? Array.from(idx) : null);
+      return {{
+        lines: p.lines.map((c) => out(th.thinLine(a[c.x], a[c.y], c.range, c.w))),
+        points: p.points.map((c) => out(th.thinPoints(a[c.x], a[c.y],
+          (c.xr || c.yr) ? {{ x: c.xr, y: c.yr }} : null, c.w, c.h))),
+      }};
+    }}"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            got = await page.evaluate(script, payload)
+        finally:
+            await browser.close()
+    for k, c in enumerate(lines):
+        want = thin_line(arrays[c["x"]], arrays[c["y"]], c["range"], c["w"])
+        assert want is not None and got["lines"][k] == want.tolist(), f"line case {k}"
+    for k, c in enumerate(points):
+        want = thin_points(arrays[c["x"]], arrays[c["y"]], c["xr"], c["yr"], c["w"], c["h"])
+        assert want is not None and got["points"][k] == want.tolist(), f"points case {k}"

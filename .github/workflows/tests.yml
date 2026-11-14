@@ -22,6 +22,11 @@ jobs:
       - name: Install FFAST
         run: pip install -e ".[dev,live]"
 
+      # The fast .xyz parser (ADR 0100): built here so the parity tests run
+      # with it present. Rust is preinstalled on the runner.
+      - name: Install the fast parser
+        run: pip install ./rust/ffast-xyz
+
       - name: Install Chromium for browser tests
         run: python -m playwright install --with-deps chromium
 

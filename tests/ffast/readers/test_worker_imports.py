@@ -27,4 +27,6 @@ def test_a_reader_worker_starts_with_one_blas_thread():
     with worker_pool(1) as pool:
         assert pool.submit(_env, "OPENBLAS_NUM_THREADS").result() == "1"
         assert pool.submit(_env, "OMP_NUM_THREADS").result() == "1"
-        assert pool.submit(_blas_threads_after_loading_the_readers).result() == [1]
+        # [] where threadpoolctl cannot see the BLAS (numpy 2 on macOS uses
+        # Accelerate); any BLAS it sees has one thread.
+        assert set(pool.submit(_blas_threads_after_loading_the_readers).result()) <= {1}

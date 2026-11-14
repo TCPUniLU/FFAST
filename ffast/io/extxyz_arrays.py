@@ -563,9 +563,8 @@ class _Filled:
                           f"the frame index counted {self.atoms:,} in {self.frames:,}")
         def cat(arrs):
             return np.concatenate(arrs) if len(arrs) > 1 else arrs[0]
-        keys = set(self.values[0])
-        for v in self.values[1:]:
-            keys &= v.keys()
+        # In the first batch's order (the header's), not a set's.
+        keys = [k for k in self.values[0] if all(k in v for v in self.values[1:])]
         columns, missing = _stack(self.extra_cols, self.extra_masks, self.extra_atoms)
         columns.update(self.wide)
         return FrameArrays(
@@ -622,7 +621,8 @@ def _one_blas_thread():
     per core in every worker: with 256 workers on a cluster node, thread
     creation failed and the workers died. The worker processes are the
     parallelism here."""
-    for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                 "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         os.environ[name] = "1"
     try:
         import threadpoolctl

@@ -95,6 +95,29 @@ class _PredictionView:
         self.energies = energies
 
 
+def _thin_view(kind, results, view):
+    """``(idx, n)``: which points of ``results`` (role → MetricResult) a plot
+    can show, or ``(None, None)`` to send them whole (small, or not one value
+    per frame of equal length)."""
+    from ffast.session.thinning import thin_line, thin_points
+
+    arrays = {r: np.asarray(res.values) for r, res in results.items()}
+    lengths = {a.shape[0] if a.ndim == 1 else -1 for a in arrays.values()}
+    if len(lengths) != 1 or -1 in lengths or "y" not in arrays:
+        return None, None
+    n = lengths.pop()
+    width, height = view.get("width") or 700, view.get("height") or 300
+    if kind == "line":
+        xs = arrays.get("x", np.arange(n))
+        idx = thin_line(xs, arrays["y"], view.get("x_range"), width)
+    elif "x" in arrays:
+        idx = thin_points(arrays["x"], arrays["y"], view.get("x_range"), view.get("y_range"),
+                          width, height)
+    else:
+        return None, None
+    return (None, None) if idx is None else (idx, n)
+
+
 def _frames_of(values, frames):
     """``values`` (one entry per frame) at ``frames``, or None."""
     if values is None:
@@ -174,7 +197,7 @@ class ServerSession:
             LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
             ProbeDatasetEnergiesRequest, PreviewEnergySampleRequest,
-            RequestMetricRequest,
+            RequestMetricRequest, RequestPlotViewRequest,
             SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
@@ -212,6 +235,7 @@ class ServerSession:
             control.SAVE_SESSION:               _Route(self._on_save_session, ["path"], SaveSessionRequest),
             control.LOAD_SESSION:               _Route(self._on_load_session, ["path"], LoadSessionRequest),
             control.REQUEST_METRIC:             _Route(self._on_request_metric, ["metric_id", "request_id"], RequestMetricRequest),
+            control.REQUEST_PLOT_VIEW:          _Route(self._on_request_plot_view, ["request_id", "kind", "metrics"], RequestPlotViewRequest),
             control.REQUEST_METRIC_CATALOG:     _Route(self._on_request_metric_catalog, [], EmptyRequest),
             control.REQUEST_TAB_LAYOUT:         _Route(self._on_request_tab_layout, [], EmptyRequest),
             control.EXPORT_SUBSET:              _Route(self._on_export_subset, ["fingerprint", "path"], ExportSubsetRequest),
@@ -1955,6 +1979,58 @@ class ServerSession:
             "METRIC_RESULT queued: metric=%r ok=%s request_id=%r",
             metric_id, result is not None, request_id,
         )
+
+    async def _on_request_plot_view(self, request_id, kind, metrics, **kwargs) -> None:
+        """Reply with PLOT_VIEW: the points of these metrics a plot can show
+        (ADR 0099). The results come from the result store, as for
+        REQUEST_METRIC; a large one is thinned to the plot's pixels
+        (``ffast.session.thinning``), a small one is sent whole.
+        CANCEL_METRIC with ``request_id`` stops it."""
+        from ffast.metrics.models import MetricResult
+        from ffast.metrics.result_store import Missing
+        from ffast.protocol.rpc import pack_plot_view
+
+        params = kwargs.get("params") or {}
+        model_fp = kwargs.get("model_fp")
+        dataset_fp = kwargs.get("dataset_fp")
+        roles = list(metrics)
+
+        if self._cancelled_early.pop(request_id, None):
+            return              # the page let go of it before it started
+        self._metric_requests[request_id] = asyncio.current_task()
+        try:
+            got = await asyncio.gather(*(
+                self.env.results.get(metrics[r], params.get(metrics[r]) or {}, dataset_fp, model_fp)
+                for r in roles), return_exceptions=True)
+        except asyncio.CancelledError:
+            logger.info("REQUEST_PLOT_VIEW %s cancelled", request_id)
+            raise
+        finally:
+            if self._metric_requests.get(request_id) is asyncio.current_task():
+                del self._metric_requests[request_id]
+
+        outcomes = {}
+        for role, o in zip(roles, got):
+            if isinstance(o, BaseException):
+                logger.error("REQUEST_PLOT_VIEW compute failed %s: %s", metrics[role], o)
+                o = Missing("failed", str(o))
+            if isinstance(o, MetricResult):
+                outcomes[role] = o
+            elif o.kind == "needs_prediction" and not model_fp:
+                outcomes[role] = (None, None)   # quiet: "Select a prediction" (ADR 0085)
+            else:
+                outcomes[role] = (o.text, o.kind)
+
+        idx = n = None
+        if all(isinstance(o, MetricResult) for o in outcomes.values()):
+            idx, n = await asyncio.to_thread(_thin_view, kind, outcomes, kwargs)
+        try:
+            data = pack_plot_view(request_id, outcomes, idx, n)
+        except Exception as exc:
+            logger.warning("PLOT_VIEW for %r could not be packed: %s", request_id, exc)
+            text = f"The result could not be sent to the page: {exc}"
+            data = pack_plot_view(request_id, {r: (text, "failed") for r in roles})
+        await self._emit(data)
 
     async def _on_cancel_metric(self, request_id, **kwargs) -> None:
         """The page no longer wants a metric it asked for (its panel was

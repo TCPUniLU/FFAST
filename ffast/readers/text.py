@@ -19,6 +19,43 @@ atom count) and ``parse(data, first_frame)`` (whole frames' bytes to the dict
 ``parse`` runs in worker processes: a staticmethod (or a top-level function
 held by the class), and the class importable. A ``NotFast`` it raises passes
 up for the caller to read the file another way.
+
+The fast parser (ADR 0100), optional: a reader may also give a staticmethod
+
+    parse_into(path, starts, ends, counts, first_frame, arrays, threads) -> dict
+
+FFAST uses it when the reader has it and the compiled package ``ffast_xyz``
+imports with the ``CONTRACT`` FFAST expects (``fast_parser_usable``). FFAST
+makes the arrays at full size and calls ``parse_into`` once per group of kept
+frames (1/50 of them, at most ``GROUP_BYTES`` of text); between calls it moves
+the progress, lets a cancel through and checks the memory floor.
+
+- ``starts``, ``ends`` (``uint64``): the byte spans of the group's frames;
+  ``counts`` (``int64``): their atoms; ``first_frame``: the file's number of
+  the group's first frame, for messages; ``threads``: how many to use.
+- ``arrays``: views of FFAST's arrays, already sliced to this group, keyed as
+  ``parse`` keys them: ``numbers`` (``int64``, atoms) and ``positions``
+  (atoms×3) to fill; ``cell`` (frames×3×3) to fill when ``contents()`` says
+  ``cell``; ``forces:<name>`` (atoms×3) and ``atom:<name>`` (atoms) for each
+  name ``contents()`` lists, already NaN, filled where a frame has them.
+- Returns, every entry optional::
+
+      {"frame":  {key: (frames, values)},   # values int64 or float64
+       "text":   {key: (frames, texts)},    # numbers only Python can read
+       "atom_new": {key: (atoms, values)},  # a per-atom key not in ``arrays``
+       "filled": [keys of ``arrays`` this group had]}
+
+  ``frames`` and ``atoms`` are row numbers within the group (``int64``).
+  ``frame`` keys are the per-frame keys ``parse`` gives (``energy:<name>``,
+  ``frame:<name>``). FFAST joins them as ``parse``'s batches join: a key every
+  kept frame has with only whole numbers stays ``int64``, else ``float64``
+  with NaN where a frame lacks it; ``frame:`` keys are always ``float64``. ``text`` values go through
+  ``extxyz_arrays._number`` (int, then float; neither: not stored).
+  ``atom_new`` values are ``float64``, NaN in the rows they do not cover. A
+  key of ``arrays`` no group lists in ``filled`` is dropped, as ``parse`` would
+  not have given it; without ``filled`` every key counts as filled.
+- Raises ``NotFast("reason")`` to hand the file to ``parse``; the reason is
+  logged. A ``NotFast`` from ``parse`` then passes up as above.
 """
 from __future__ import annotations
 
@@ -34,7 +71,7 @@ import numpy as np
 
 from ffast.io import extxyz_arrays as xa
 from ffast.io import frame_cache, frame_index
-from ffast.io.extxyz_arrays import MEMORY_FLOOR, MEMORY_SHARE, NotEnoughMemory, _gib
+from ffast.io.extxyz_arrays import MEMORY_FLOOR, MEMORY_SHARE, NotEnoughMemory, NotFast, _gib
 from ffast.metrics.resources import available_memory
 from ffast.readers.contract import ReaderError
 
@@ -160,6 +197,8 @@ def get_energies(reader_class, path, *, workers=None, use_cache=True):
 
 def _read_energies(reader_class, path, starts, workers):
     n = len(starts)
+    if workers is None and callable(getattr(reader_class, "parse_into", None)) and fast_parser_usable():
+        workers = 1       # a reader with the fast parser reads energies on its own threads (ADR 0100)
     if workers is None:
         workers = min(xa.worker_count(), ENERGY_WORKERS)
     if workers <= 1 or n < max(ENERGY_PARALLEL_MIN_FRAMES, 2):
@@ -350,9 +389,10 @@ class _Joined:
 
 
 def read_level2(reader_class, path, *, stride=0, select=None, progress=None, workers=None,
-                batch=None, use_cache=True):
+                batch=None, use_cache=True, on_handover=None):
     """The kept frames of ``path`` through a Level 2 reader: ``(arrays,
-    contents, frames, n_file_frames)``."""
+    contents, frames, n_file_frames)``. ``on_handover(text)`` gets the load's
+    status text when the fast parser hands the file over (ADR 0100)."""
     name = os.path.basename(path)
     reader = reader_class(path)
     contents = dict(reader.contents() or {})
@@ -379,6 +419,38 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
     index = np.asarray(frames, dtype=np.intp)
     spans_start, spans_end = starts[index], starts[index + 1]
     kept_counts = counts[index]
+
+    arrays = None
+    if callable(getattr(reader_class, "parse_into", None)):
+        if not fast_parser_usable():
+            _warn_no_fast_parser()
+        else:
+            try:
+                arrays = _read_fast(reader_class, path, contents, frames, spans_start, spans_end,
+                                    kept_counts, progress, workers, batch)
+            except NotFast as exc:
+                note = f"{name}: read with the slower Python parser ({exc})"
+                logger.warning("%s", note, extra={"popup": False})
+                if on_handover:
+                    on_handover(note)
+    if arrays is None:
+        arrays = _read_python(reader_class, path, frames, spans_start, spans_end, kept_counts,
+                              progress, workers, batch)
+
+    if use_cache and step is not None:
+        _kept_save(reader_class, path, step, arrays, n_file)
+        kept = _kept_load(reader_class, path, step)   # None: not kept, or cannot be opened
+        if kept is not None:
+            arrays = kept[0]
+    return arrays, contents, frames, n_file
+
+
+def _read_python(reader_class, path, frames, spans_start, spans_end, kept_counts, progress,
+                 workers, batch):
+    """The kept frames through the reader's ``parse``, in batches, in worker
+    processes for a big file: the joined arrays."""
+    name = os.path.basename(path)
+    total = len(frames)
     atoms = int(kept_counts.sum())
     sizes = spans_end - spans_start
     workers = xa.worker_count() if workers is None else workers
@@ -456,11 +528,193 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
     if joined.a != atoms or joined.f != total:
         raise ValueError(f"read {joined.a:,} atoms in {joined.f:,} frames, the frame list "
                          f"counted {atoms:,} in {total:,}")
+    return joined.arrays
 
-    arrays = joined.arrays
-    if use_cache and step is not None:
-        _kept_save(reader_class, path, step, arrays, n_file)
-        kept = _kept_load(reader_class, path, step)   # None: not kept, or cannot be opened
-        if kept is not None:
-            arrays = kept[0]
-    return arrays, contents, frames, n_file
+
+# ── the fast parser (ADR 0100) ──────────────────────────────────────────────
+
+FAST_CONTRACT = 1              # the ffast_xyz.CONTRACT this FFAST expects
+GROUPS = 50                    # a group is 1/GROUPS of the kept frames ...
+GROUP_BYTES = 256 * 2**20      # ... and at most this much text
+# Threads for the fast parser, unless FFAST_READ_WORKERS says: more were
+# slower on MeluXina (256 cores; shard_00 first open 5.4 s at 64, 9.4 s at 256).
+FAST_THREADS = 32
+_fast_usable = None
+_fast_missing = True           # when not usable: not installed (True) or too old (False)
+_fast_warned = False           # the pop-up was sent (once per server start)
+
+
+def fast_parser_usable():
+    """Whether the compiled package ``ffast_xyz`` imports and follows the
+    ``parse_into`` contract this FFAST expects. Checked once per process."""
+    global _fast_usable, _fast_missing
+    if _fast_usable is None:
+        try:
+            import ffast_xyz
+        except ImportError:
+            _fast_usable, _fast_missing = False, True
+        else:
+            _fast_usable = getattr(ffast_xyz, "CONTRACT", None) == FAST_CONTRACT
+            _fast_missing = False
+    return _fast_usable
+
+
+def fast_threads():
+    """Threads for the fast parser: ``FFAST_READ_WORKERS`` when set, else
+    the cores this process may use, at most FAST_THREADS."""
+    if os.environ.get("FFAST_READ_WORKERS"):
+        return xa.worker_count()
+    return min(xa.worker_count(), FAST_THREADS)
+
+
+def _warn_no_fast_parser():
+    """The pop-up of ADR 0100 decision 5: once per server start, the first
+    time a reader with ``parse_into`` reads a file without a usable package."""
+    global _fast_warned
+    with _lock:
+        if _fast_warned:
+            return
+        _fast_warned = True
+    if _fast_missing:
+        why, fix = "Fast reader not installed", "install it"
+    else:
+        why, fix = "Fast reader is too old for this FFAST", "update it"
+    logger.warning("%s: .xyz files load with the slower Python parser. Run "
+                   "`ffast install-fast-reader` to %s and load them up to 10× faster.", why, fix)
+
+
+def _groups(sizes, batch=None):
+    """``[(a, b)]`` row ranges over frames whose texts are ``sizes`` bytes:
+    ``batch`` frames each (default 1/GROUPS of them), cut short at
+    GROUP_BYTES of text, at least one frame."""
+    total = len(sizes)
+    per = int(batch) if batch else -(-total // GROUPS)
+    ends = np.cumsum(np.asarray(sizes, dtype=np.int64))
+    out, a = [], 0
+    while a < total:
+        before = int(ends[a - 1]) if a else 0
+        fit = int(np.searchsorted(ends, before + GROUP_BYTES, side="right"))   # frames up to here fit
+        b = max(a + 1, min(a + per, fit, total))
+        out.append((a, b))
+        a = b
+    return out
+
+
+class _Values:
+    """The per-frame values ``parse_into`` returns, joined as ``_Joined``
+    joins ``parse``'s batches: ``int64`` while every kept frame has the key
+    with a whole number, else ``float64`` with NaN where a frame lacks it."""
+
+    def __init__(self, frames):
+        self.frames = frames
+        self.parts: dict = {}               # key -> [(rows, values)]
+
+    def add(self, start, got):
+        for key, (rows, values) in (got.get("frame") or {}).items():
+            self._put(key, rows, np.asarray(values), start)
+        for key, (rows, texts) in (got.get("text") or {}).items():
+            numbers = [xa._number(t if isinstance(t, str) else bytes(t).decode()) for t in texts]
+            keep = [i for i, v in enumerate(numbers) if v is not None]
+            if keep:
+                self._put(key, np.asarray(rows)[keep], np.array([numbers[i] for i in keep]), start)
+
+    def _put(self, key, rows, values, start):
+        rows = np.asarray(rows, dtype=np.int64)
+        if values.shape != rows.shape:
+            raise ValueError(f"parse_into() gave {values.shape} values of '{key}' for "
+                             f"{rows.shape} frames")
+        self.parts.setdefault(key, []).append((rows + start, values))
+
+    def result(self):
+        out = {}
+        for key, parts in self.parts.items():
+            rows = np.concatenate([r for r, _ in parts])
+            seen = np.zeros(self.frames, dtype=bool)
+            seen[rows] = True
+            kinds = {v.dtype.kind for _, v in parts}
+            whole = seen.all() and not key.startswith("frame:")    # frame fields are float64
+            if "O" in kinds:            # a whole number beyond 64 bits: as np.array makes it
+                column = np.full(self.frames, np.nan, dtype=object)
+                for r, v in parts:
+                    column[r] = v
+                column = np.array(column.tolist()) if whole else column.astype(np.float64)
+            elif whole and kinds <= {"i", "u"}:
+                column = np.empty(self.frames, dtype=np.int64)
+                for r, v in parts:
+                    column[r] = v
+            else:
+                column = np.full(self.frames, np.nan)
+                for r, v in parts:
+                    column[r] = v
+            out[key] = column
+        return out
+
+
+def _read_fast(reader_class, path, contents, frames, spans_start, spans_end, kept_counts,
+               progress, threads, batch):
+    """The kept frames through the reader's ``parse_into``: FFAST's arrays,
+    made at full size, filled one group at a time."""
+    name = os.path.basename(path)
+    total = len(frames)
+    atoms = int(kept_counts.sum())
+    threads = fast_threads() if threads is None else max(1, int(threads))
+    fields = ([f"forces:{k}" for k in contents.get("forces") or []]
+              + [f"atom:{k}" for k in contents.get("atom_fields") or []])
+    has_cell = bool(contents.get("cell"))
+    n_values = len(contents.get("energies") or []) + len(contents.get("frame_fields") or [])
+
+    # Sizing: the final arrays only; the fast parser holds little beyond them.
+    per_atom_bytes = 8 + 24 + sum(24 if k.startswith("forces:") else 8 for k in fields)
+    per_frame_bytes = 8 + (72 if has_cell else 0) + 8 * n_values
+    final = atoms * per_atom_bytes + total * per_frame_bytes
+    free = available_memory()
+    _, fits, need = xa._plan(final, 0, 1, free)
+    if not fits:
+        raise NotEnoughMemory(
+            f"{name} needs about {_gib(need)} of memory to load ({atoms:,} atoms in {total:,} "
+            f"frames), but {_gib(free)} is free. Close other programs, or load a smaller file.")
+    groups = _groups(spans_end - spans_start, batch)
+    logger.info("Reading %s with the fast parser: %s frames, %d groups, %d thread(s), about %s of %s free",
+                name, f"{total:,}", len(groups), threads, _gib(need), _gib(free))
+
+    arrays = {"n_atoms": np.array(kept_counts, dtype=np.int64),
+              "numbers": np.empty(atoms, dtype=np.int64),
+              "positions": np.empty((atoms, 3), dtype=np.float64)}
+    if has_cell:
+        arrays["cell"] = np.empty((total, 3, 3), dtype=np.float64)
+    for key in fields:
+        arrays[key] = np.full((atoms, 3) if key.startswith("forces:") else atoms, np.nan)
+
+    first_atom = np.concatenate([[0], np.cumsum(kept_counts)])
+    starts_u, ends_u = spans_start.astype(np.uint64), spans_end.astype(np.uint64)
+    counts = np.asarray(kept_counts, dtype=np.int64)
+    values = _Values(total)
+    filled: set = set()
+    for a, b in groups:
+        a0, a1 = int(first_atom[a]), int(first_atom[b])
+        views = {k: (v[a0:a1] if per_atom(k) else v[a:b]) for k, v in arrays.items() if k != "n_atoms"}
+        got = reader_class.parse_into(path, starts_u[a:b], ends_u[a:b], counts[a:b], int(frames[a]),
+                                      views, threads) or {}
+        values.add(a, got)
+        filled.update(got["filled"] if "filled" in got else fields)
+        for key, (rows, column) in (got.get("atom_new") or {}).items():
+            if not per_atom(key):
+                raise ValueError(f"parse_into() gave '{key}' as a new per-atom key")
+            column = np.asarray(column, dtype=np.float64)
+            if key not in arrays:
+                arrays[key] = np.full((atoms,) + column.shape[1:], np.nan)
+            arrays[key][a0 + np.asarray(rows, dtype=np.int64)] = column
+            filled.add(key)
+        left = available_memory()
+        if b < total and left < MEMORY_FLOOR:
+            raise NotEnoughMemory(
+                f"Stopped reading {name} after {b:,} of {total:,} frames: only {_gib(left)} "
+                f"of memory is left. Close other programs, or load a smaller file.")
+        if progress:
+            progress(b, total)
+
+    for key in fields:
+        if key not in filled:
+            del arrays[key]
+    arrays.update(values.result())
+    return arrays

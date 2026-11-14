@@ -683,9 +683,10 @@ export function buildTimeline(spec, series, ctx) {
   let peaks = [];
   let extraHeight = 0;
   if (traces.length === 1 && ctx.peaks !== false) {
-    peaks = pickPeaks(traces[0].y);
+    // A thinned curve (ADR 0099) names its frames: the peaks are counted in them.
+    const s = series[curveSeries[0]];
+    peaks = pickPeaks(traces[0].y, 5, s.thin?.idx || null, s.thin?.n ?? null);
     if (peaks.length) {
-      const s = series[curveSeries[0]];
       const seen = ctx.visited;
       layout.annotations = peakAnnotations(peaks, u.y,
         (frame) => !!seen && seen.has(visitedKey(s.datasetFp, s.modelFp, frame)));
@@ -1388,6 +1389,22 @@ export function rethin(el, ev = null) {
   const rows = thinned(thin, range, { w: fl._size.w, h: fl._size.h });
   return Plotly().restyle(el, { x: rows.map((r) => r[1]), y: rows.map((r) => r[2]) }, rows.map((r) => r[0]))
     .catch(() => {});   // hidden or replaced meanwhile
+}
+
+/** New values for drawn traces (a thinned view for a zoom, ADR 0099), as
+ * `[[trace index, x, y], …]`: each is thinned again for the view shown, and
+ * the plot's zoom stays. */
+export function replaceTraceData(el, rows) {
+  const thin = el._thin;
+  const direct = [];
+  for (const [i, x, y] of rows) {
+    const t = thin?.traces.find((e) => e.i === i);
+    if (t) { t.x = x; t.y = y; } else direct.push([i, x, y]);
+  }
+  const done = thin ? rethin(el) : Promise.resolve();
+  if (!direct.length) return done;
+  return done.then(() => Plotly().restyle(el, { x: direct.map((r) => r[1]), y: direct.map((r) => r[2]) },
+    direct.map((r) => r[0])).catch(() => {}));
 }
 
 /** The index in the full data of point `pointIndex` drawn in trace `curve`. */

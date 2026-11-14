@@ -24,7 +24,7 @@
  */
 
 import { helpToggle, PICKER_HELP } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, panelNotes, neededPredictions, clearPlot, tickAt, nextSort, rethin, fullIndex, fullTraces } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, panelNotes, neededPredictions, clearPlot, tickAt, nextSort, rethin, fullIndex, fullTraces, buildPanel, replaceTraceData } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
 import { spinner } from './spinner.js';
@@ -96,6 +96,17 @@ function panelKey(spec) {
 /** The data a plot draws; a kept zoom applies only to the same data. */
 function seriesKey(series) {
   return (series || []).map((s) => `${s.datasetFp}|${s.modelFp || ''}`).join(' ');
+}
+
+/** Wait this long after the last zoom or pan before asking for its points (ADR 0099). */
+const VIEW_DELAY_MS = 120;
+
+/** A plot's drawing area in pixels: as drawn, or guessed from its box. */
+function viewSize(el) {
+  const s = el?._fullLayout?._size;
+  if (s?.w && s?.h) return { width: s.w, height: s.h };
+  return { width: Math.max(100, (el?.clientWidth || 800) - 70),
+           height: Math.max(100, (el?.clientHeight || 300) - 50) };
 }
 
 /** Wait this long after the last zoom or pan before moving the subset. */
@@ -1853,7 +1864,7 @@ export class AnalysisManager {
       { id: 'panel-svg', label: 'Download SVG…', unavailable: notDrawn,
         run: () => this._downloadPicture(el, card, stem, 'svg') },
       { id: 'panel-csv', label: 'Download data (CSV)', unavailable: notDrawn,
-        run: () => downloadText(plotCsv(fullTraces(el), el._figureInfo || {}), `${stem}.csv`) },
+        run: () => this._downloadData(t, spec, card, stem) },
     ];
     // "Hide legend" / "Show legend": saved in the tab as `legend = false`; the
     // default is the automatic rule (a legend once there is more than one thing to name).
@@ -2096,15 +2107,27 @@ export class AnalysisManager {
     const previous = card.abort;
     const abort = card.abort = new AbortController();
     let perSeries;
+    // A timeline or scatter asks for the points it can show (ADR 0099): a
+    // large result comes thinned, with the frame of each point.
+    const viewKind = this._viewKind(spec);
+    const thins = refs.map(() => null);
     this._busy(card, +1);
     try {
-      const asked = Promise.all(refs.map((ref) =>
-        Promise.all(jobs.map((j) => this._metrics.request(j.id, {
-          datasetFp: ref.datasetFp,
-          modelFp: ref.modelFp,
-          params: this._metricParams(t, spec, j.id),
+      const asked = viewKind
+        ? Promise.all(refs.map((ref, si) => this._metrics.view({
+          ...this._viewAsk(t, spec, viewKind, ref, card, this._keptZoom(t, spec, refs)),
           signal: abort.signal,
-        })))));
+        }).then((v) => {
+          if (v?.idx) thins[si] = { idx: v.idx, n: v.n };
+          return jobs.map((j) => (v ? v.results[j.role] ?? null : null));
+        })))
+        : Promise.all(refs.map((ref) =>
+          Promise.all(jobs.map((j) => this._metrics.request(j.id, {
+            datasetFp: ref.datasetFp,
+            modelFp: ref.modelFp,
+            params: this._metricParams(t, spec, j.id),
+            signal: abort.signal,
+          })))));
       previous?.abort();
       perSeries = await asked;
     } finally {
@@ -2139,7 +2162,10 @@ export class AnalysisManager {
         if (j.k !== undefined) { (data[j.role] ||= [])[j.k] = results[i]; }
         else data[j.role] = results[i];
       });
-      if (results.some((r) => r && r.nd)) series.push({ ...ref, data });
+      const thin = thins[si];
+      // A thinned line's x is the frame of each point.
+      if (thin && viewKind === 'line' && !data.x) data.x = { nd: { values: thin.idx, shape: [thin.idx.length] } };
+      if (results.some((r) => r && r.nd)) series.push({ ...ref, data, ...(thin ? { thin } : {}) });
     });
 
     if (!series.length) {
@@ -2186,7 +2212,9 @@ export class AnalysisManager {
     // A ÷ threshold value draws a dashed line at 1 (ADR 0091).
     const level = spec.kind === 'timeline' && !Number.isFinite(spec.y_line)
       ? this._catalog.get(spec.metrics?.y)?.level : null;
-    renderPanel(card.body, Number.isFinite(level) ? { ...spec, y_line: level } : spec, series, ctx);
+    const drawn = Number.isFinite(level) ? { ...spec, y_line: level } : spec;
+    renderPanel(card.body, drawn, series, ctx);
+    card.drawn = { spec: drawn, ctx };     // a zoom's new points are built alike
     this._showWarnings(card, series);
     card.series = series;
     card.unitDims = ctx.unitDims;
@@ -2270,6 +2298,111 @@ export class AnalysisManager {
       }
     }
     this._openFrame?.(o);
+  }
+
+  // ── thinned views (ADR 0099) ───────────────────────────────────────────────
+
+  /** "Download data (CSV)": every point of the plot. A thinned view holds
+   * only the points drawn, so its whole results are fetched first, with a
+   * spinner in the title meanwhile (ADR 0099 decision 5). */
+  async _downloadData(t, spec, card, stem) {
+    const el = card.body;
+    const series = card.series || [];
+    if (!card.drawn || !series.some((s) => s.thin)) {
+      downloadText(plotCsv(fullTraces(el), el._figureInfo || {}), `${stem}.csv`);
+      return;
+    }
+    const busy = spinner(true);
+    card.title.insertBefore(busy, card.more);
+    try {
+      const whole = await Promise.all(series.map(async (s) => {
+        if (!s.thin) return s;
+        const data = {};
+        await Promise.all(Object.entries(spec.metrics).map(async ([role, id]) => {
+          data[role] = await this._metrics.request(id, {
+            datasetFp: s.datasetFp, modelFp: s.modelFp, params: this._metricParams(t, spec, id) });
+        }));
+        if (Object.values(data).some((r) => !r?.nd)) return null;
+        const { thin, ...rest } = s;      // and its x of frames goes: the index is x again
+        return { ...rest, data };
+      }));
+      if (whole.some((s) => !s)) {
+        showOnce(`csv|${stem}`, `The data of ${spec.title || 'this panel'} could not be fetched for the file.`, 'error');
+        return;
+      }
+      const built = buildPanel(card.drawn.spec, whole, card.drawn.ctx);
+      downloadText(plotCsv(built.traces, el._figureInfo || {}), `${stem}.csv`);
+    } finally {
+      busy.remove();
+    }
+  }
+
+  /** 'line' or 'points' for a panel that asks for thinned views, else null:
+   * a timeline (not a live run's) or a scatter of single metrics. */
+  _viewKind(spec) {
+    const m = spec.metrics || {};
+    const roles = Object.keys(m);
+    if (!roles.every((r) => typeof m[r] === 'string')) return null;
+    if (spec.kind === 'timeline' && !spec.liveScores && m.y && roles.every((r) => r === 'y' || r === 'x')) return 'line';
+    if (spec.kind === 'scatter' && m.x && m.y && roles.length === 2) return 'points';
+    return null;
+  }
+
+  /** The zoom kept for this panel, when it is of the same data. */
+  _keptZoom(t, spec, refs) {
+    const zoom = t.zoom?.[panelKey(spec)];
+    return zoom && zoom.series === seriesKey(refs) ? zoom : null;
+  }
+
+  /** A view request for one series of a panel, for `range` ({x, y} or null). */
+  _viewAsk(t, spec, kind, ref, card, range) {
+    const ids = Object.values(spec.metrics);
+    return {
+      kind, metrics: spec.metrics,
+      params: Object.fromEntries(ids.map((id) => [id, this._metricParams(t, spec, id)])),
+      datasetFp: ref.datasetFp, modelFp: ref.modelFp,
+      xRange: range?.x || null, yRange: range?.y || null,
+      ...viewSize(card.body),
+    };
+  }
+
+  /** After a zoom or pan settles, ask for the points of the new view. */
+  _scheduleView(t, spec, card, ev) {
+    if (ev && !Object.keys(ev).some((k) => k.startsWith('xaxis') || k.startsWith('yaxis'))) return;
+    clearTimeout(card.viewTimer);
+    card.viewTimer = setTimeout(() => this._refreshView(t, spec, card), VIEW_DELAY_MS);
+  }
+
+  /** The thinned series of a drawn plot, again for the range it shows: its
+   * data is replaced in place, so the zoom stays. The plot keeps showing the
+   * points it has until the new ones come. */
+  async _refreshView(t, spec, card) {
+    const el = card.body;
+    const range = plotRange(el);
+    const series = card.series;
+    const kind = this._viewKind(spec);
+    if (!range || !series || !kind || !card.drawn) return;
+    const seq = card.seq;
+    card.viewAbort?.abort();
+    const abort = card.viewAbort = new AbortController();
+    const want = series.map((s, i) => (s.thin ? i : -1)).filter((i) => i >= 0);
+    const replies = await Promise.all(want.map((i) => this._metrics.view({
+      ...this._viewAsk(t, spec, kind, series[i], card, range), signal: abort.signal })));
+    if (seq !== card.seq || card.series !== series || abort.signal.aborted) return;   // redrawn meanwhile
+    replies.forEach((v, k) => {
+      if (!v || !v.idx) return;
+      const s = series[want[k]];
+      for (const [role, r] of Object.entries(v.results)) if (r?.nd) s.data[role] = r;
+      s.thin = { idx: v.idx, n: v.n };
+      if (kind === 'line' && !spec.metrics.x) s.data.x = { nd: { values: v.idx, shape: [v.idx.length] } };
+    });
+    const built = buildPanel(card.drawn.spec, series, card.drawn.ctx);
+    const curves = el._subInfo?.curveSeries || [];
+    const rows = [];
+    curves.forEach((si, c) => {
+      if (want.includes(si) && built?.traces?.[c]) rows.push([c, built.traces[c].x, built.traces[c].y]);
+    });
+    if (rows.length) await replaceTraceData(el, rows);
   }
 
   /** Compute-param values to send for one metric of a panel. */
@@ -2592,6 +2725,7 @@ export class AnalysisManager {
         this._onPanelLabels?.(t.spec.name, spec, { legend_x: r3(ev['legend.x']), legend_y: r3(ev['legend.y']) });
       }
       rethin(el, ev);   // the points the new view shows
+      if (card.series?.some((s) => s.thin)) this._scheduleView(t, spec, card, ev);
       this._noteZoom(t, spec, card);
       this._linkX(t, spec, ev);
     });
@@ -2636,7 +2770,9 @@ export class AnalysisManager {
       // A point that is not a frame carries its frame in its data (a parity dot).
       // A live run's points are its scored frames, in order (ADR 0087).
       // A thinned trace draws some of its points (thin.js): back to the full data.
-      const point = fullIndex(el, pt.curveNumber, pt.pointIndex);
+      const drawnAt = fullIndex(el, pt.curveNumber, pt.pointIndex);
+      // A thinned view's points name their frames (ADR 0099).
+      const point = src?.thin ? src.thin.idx[drawnAt] : drawnAt;
       const index = info.frameField != null ? pt.customdata?.[info.frameField]
         : src?.frames ? src.frames[point] : point;
       if (index == null || !src) return;

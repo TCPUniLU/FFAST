@@ -79,6 +79,11 @@ CANCEL_TRY_METRIC = "CANCEL_TRY_METRIC"
 CANCEL_METRIC = "CANCEL_METRIC"
 # The keep boxes of a metric, or of a box change (ADR 0065): touches no data.
 REQUEST_METRIC_BOXES = "REQUEST_METRIC_BOXES"
+# The points a plot can show (ADR 0099): {request_id, kind ("line" | "points"),
+# metrics {role: metric id}, params {metric id: params}, dataset_fp, model_fp,
+# x_range, y_range, width, height}. Answered with PLOT_VIEW; CANCEL_METRIC with
+# its request_id stops it.
+REQUEST_PLOT_VIEW = "REQUEST_PLOT_VIEW"
 # Answer "Add them?" after a session load offered the user metrics it carries
 # that this server lacks (rule 15).
 ADD_SESSION_METRICS = "ADD_SESSION_METRICS"
@@ -135,7 +140,7 @@ CLIENT_TO_SERVER = frozenset(
         SAVE_TAB, DELETE_TAB, HIDE_TAB, SET_TAB_ORDER, EXPORT_TAB,
         REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
         REQUEST_METRIC_INPUTS, CHECK_METRIC, TRY_METRIC, CANCEL_TRY_METRIC,
-        REQUEST_METRIC_BOXES, ADD_SESSION_METRICS, TRACE, OPEN_LIVE_RUN,
+        REQUEST_METRIC_BOXES, REQUEST_PLOT_VIEW, ADD_SESSION_METRICS, TRACE, OPEN_LIVE_RUN,
         PREPARE_PRACTICE_INPUT, START_PRACTICE_RUN, HEAT_PRACTICE_RUN, DELETE_PRACTICE_RUN, LIVE_STOP, LIVE_SET_STOP_ON_ALARM, LIVE_ATTRIBUTION, LIST_LIVE_RUNS, FORGET_LIVE_RUN,
         MAKE_REFERENCE, PREPARE_RUN_WITH_FFAST, WRITE_RUN_WITH_FFAST, SUBMIT_JOB, WATCH_JOB,
         SCAN_RUN_FOLDER, SCORE_DIALOG_INFO, SCORE_DATASET, CONTINUE_SCORING,
@@ -312,6 +317,11 @@ METRIC_TRIED = "METRIC_TRIED"
 # base_label, setting, custom, allowed, hints, problem, id, expr, vars, label,
 # unit, shape, exists} (ffast.metrics.boxes.box_state), or {request_id, error}.
 METRIC_BOXES = "METRIC_BOXES"
+# Reply to REQUEST_PLOT_VIEW, to the window that asked: args (request_id,),
+# {ok, n, idx, results: {role: METRIC_RESULT fields}}. A small result comes
+# whole (no idx); a large one as the points kept (ffast.session.thinning),
+# idx their frame numbers, n the full length (ADR 0099).
+PLOT_VIEW = "PLOT_VIEW"
 # Reply to DECLARE_SUBSET, to the window that sent it: {fingerprint,
 # parent_fingerprint, model_fp, name}, which subset the plot's view made, so
 # the window that ticked SUB can show it in its main view. Every window learns
@@ -354,7 +364,7 @@ FINAL_REPLY = {
 #: request → its reply, matched by an id of its own that predates reply_to
 #: (request_id, try_id, check_id, view_id); these may fold into reply_to later.
 OWN_ID_REPLY = {
-    REQUEST_METRIC: METRIC_RESULT, REQUEST_METRIC_BOXES: METRIC_BOXES,
+    REQUEST_METRIC: METRIC_RESULT, REQUEST_METRIC_BOXES: METRIC_BOXES, REQUEST_PLOT_VIEW: PLOT_VIEW,
     CHECK_METRIC: METRIC_CHECKED, TRY_METRIC: METRIC_TRIED,
     REQUEST_METRIC_INPUTS: METRIC_INPUTS, OPEN_VIEW: SCENE_SNAPSHOT, VIEW_COMMAND: COMMAND_RESULT,
 }

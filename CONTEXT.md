@@ -104,6 +104,19 @@ gives two text-format pieces (find the frames, parse whole frames) and gets the
 frame index and parallel parsing as well (ADR 0095).
 _Avoid_: loader (that is FFAST's internal dataset object), parser, importer
 
+### Fast parser
+
+A Level 2 reader's compiled parser: it fills the arrays FFAST made for a
+file's frames, on several threads at once. A reader may have one; when it is
+missing, or a file holds something it cannot match exactly, the reader's
+**Python parser** reads the file instead, slower, and FFAST says so.
+_Avoid_: native reader, Rust reader (a reader is the class; the language is not the point)
+
+### Python parser
+
+A Level 2 reader's parser written in Python: whole frames' text to arrays,
+in worker processes. The reference the fast parser must agree with.
+
 ### Energy sampling
 
 Choosing which frames of a file to load from their energies alone, before any
@@ -277,6 +290,14 @@ many ask at the same time, and keeps results within a memory limit. Plots,
 atom colouring, a subset following a plot's zoom, and Try's references to
 saved metrics all ask it. A metric result is the answer; the store is where
 answers are asked for.
+
+### Thinned view
+
+The points of a large metric result that a plot can show at its size: in each
+pixel column of a line its first, lowest, highest and last point; one dot
+per small cell of a scatter. Each point keeps its frame number, so a click
+still opens that structure. A zoom asks for a new thinned view. The full
+result stays with the server (ADR 0099).
 
 ### Missing result, needs a prediction
 

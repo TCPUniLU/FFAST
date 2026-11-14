@@ -46,6 +46,18 @@ export const KEEP_VALUES = 32_000_000;
  * @typedef {{nd: null, failed: true, error: string, kind: string, metricId: string}} MetricFailure
  *   `kind`: needs_prediction, failed, missing_input, temporary or object_gone (ADR 0085). */
 
+/** A METRIC_RESULT's fields as the page holds them: a result, a failure
+ * that says why, or null (no result and nothing to say). */
+function decodeResult(kw, metricId) {
+  if (kw.ok) {
+    return { nd: kw.values ? decodeNdarray(kw.values) : null, shape: kw.shape, unit: kw.unit,
+      dtype: kw.dtype, warnings: kw.warnings || [], metricId: kw.metric_id };
+  }
+  return kw.error
+    ? { nd: null, failed: true, error: kw.error, kind: kw.kind || 'failed', metricId }
+    : null;
+}
+
 export class MetricClient {
   /** @param {import('./connection.js').FFastConnection} conn */
   constructor(conn) {
@@ -61,6 +73,57 @@ export class MetricClient {
     this._kept = new Map();
     this._keptSize = 0;
     conn.on(IN.METRIC_RESULT, (kw, args) => this._onResult(kw, args));
+    /** @type {Map<string, {resolve: Function, metrics: Object<string, string>}>} view request id → waiter */
+    this._views = new Map();
+    conn.on(IN.PLOT_VIEW, (kw, args) => this._onView(kw, args));
+  }
+
+  /**
+   * The points of a plot's metrics that it can show (ADR 0099): the whole
+   * results when they are small, else the points kept for this range and
+   * size, with `idx` their frame numbers and `n` the full length.
+   * @param {{kind: 'line'|'points', metrics: Object<string, string>,
+   *   params?: Object<string, object>, modelFp?: string|null, datasetFp?: string|null,
+   *   xRange?: number[]|null, yRange?: number[]|null, width: number, height: number,
+   *   signal?: AbortSignal|null}} ask
+   * @returns {Promise<{results: Object<string, MetricResult|MetricFailure|null>,
+   *   idx: number[]|null, n: number|null}|null>} null when let go of
+   */
+  view({ kind, metrics, params = {}, modelFp = null, datasetFp = null,
+    xRange = null, yRange = null, width, height, signal = null }) {
+    const requestId = `v${++this._nextId}`;
+    const promise = new Promise((resolve) => this._views.set(requestId, { resolve, metrics }));
+    this._conn.send(OUT.REQUEST_PLOT_VIEW, {
+      request_id: requestId, kind, metrics, params,
+      model_fp: modelFp, dataset_fp: datasetFp,
+      ...(xRange ? { x_range: xRange } : {}),
+      ...(yRange ? { y_range: yRange } : {}),
+      width: Math.round(width), height: Math.round(height),
+    });
+    if (signal) {
+      const letGo = () => {
+        const waiter = this._views.get(requestId);
+        if (!waiter) return;                // already answered
+        this._views.delete(requestId);
+        this._conn.send(OUT.CANCEL_METRIC, { request_id: requestId });
+        waiter.resolve(null);
+      };
+      if (signal.aborted) letGo();
+      else signal.addEventListener('abort', letGo, { once: true });
+    }
+    return promise;
+  }
+
+  _onView(kw, args) {
+    const requestId = args && args[0];
+    const waiter = requestId != null ? this._views.get(requestId) : null;
+    if (!waiter) return;
+    this._views.delete(requestId);
+    const results = {};
+    // A failure names no metric: the role's metric is the one asked for.
+    for (const [role, r] of Object.entries(kw.results || {})) results[role] = decodeResult(r, waiter.metrics[role]);
+    const idx = kw.idx ? decodeNdarray(kw.idx)?.values || null : null;
+    waiter.resolve({ results, idx, n: idx ? kw.n : null });
   }
 
   /**
@@ -140,17 +203,10 @@ export class MetricClient {
       waiter.resolve(waiter.kept.result);
       return;
     }
-    const result = kw.ok && !kw.unchanged
-      ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype,
-          warnings: kw.warnings || [], metricId: kw.metric_id }
-      : null;
+    const result = kw.ok && !kw.unchanged ? decodeResult(kw, args[1]) : null;
     if (result && kw.tag) this._keep(waiter.label, kw.tag, result);
     else this._drop(waiter.label);
-    waiter.resolve(
-      result || (kw.error
-        ? { nd: null, failed: true, error: kw.error, kind: kw.kind || 'failed', metricId: args[1] }
-        : null),
-    );
+    waiter.resolve(result || decodeResult({ ...kw, ok: false }, args[1]));
   }
 
   /** Keep `result` for `label`, dropping the least recently used beyond KEEP_VALUES. */
