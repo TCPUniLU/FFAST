@@ -101,6 +101,17 @@ def test_extra_columns_fill_across_batches(tmp_path, monkeypatch):
     assert fa.missing["spin"].tolist() == [True] * 4 + [False] * 2
 
 
+def test_header_values_keep_the_header_order_across_batches(tmp_path, monkeypatch):
+    # Joined through a set, the order changed from one run to the next.
+    monkeypatch.setattr(xa, "MIN_BATCH", 1)
+    keys = [f"k{i}" for i in range(12, 0, -1)] + ["energy"]
+    header = " ".join(f"{k}={i}" for i, k in enumerate(keys)) + " Properties=species:S:1:pos:R:3"
+    path = tmp_path / "order.extxyz"
+    path.write_text("".join(f"1\n{header}\nH 0.0 0.0 {f}.0\n" for f in range(3)))
+    fa = xa.read_frames(fi.scan(str(path)), workers=1, batch=1)
+    assert list(fa.values) == keys
+
+
 def test_an_integer_extra_column_becomes_float_with_nan(tmp_path):
     p = tmp_path / "ints.extxyz"
     p.write_text("1\nProperties=species:S:1:pos:R:3 energy=1.0\nH 0 0 0\n"
