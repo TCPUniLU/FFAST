@@ -6,11 +6,18 @@ dialog's frame count), ``parse`` is ``parse_block``. A file it cannot read
 raises ``NotFast``; FFAST then reads the file with the ASE reader
 (``fallback``), as before.
 
+With the package ``ffast-xyz`` installed, ``parse_into`` is the fast parser
+(ADR 0100): Rust fills FFAST's arrays on threads, by the same rules, and hands
+a file it cannot match exactly to ``parse``.
+
 Names follow the ASE reader and the old key probe: header keys and columns
 that mention energy or force, then the literal ``energy`` / ``forces`` (what an
 extxyz file's ``energy=`` and ``forces`` column are for ASE: its calculator).
 """
 from __future__ import annotations
+
+import functools
+import os
 
 import numpy as np
 from ase.calculators.calculator import all_properties
@@ -81,6 +88,46 @@ class XyzReader:
         return out
 
     @staticmethod
+    def parse_into(path, starts, ends, counts, first_frame, arrays, threads):
+        """The fast parser (ADR 0100): ``ffast_xyz.parse_into`` fills the
+        arrays; its header keys and new columns get the names ``parse``
+        gives them."""
+        import ffast_xyz
+        columns, keys = [], {}               # (file column, view); file column -> key
+        for key, view in arrays.items():
+            if key.startswith("forces:"):
+                name = key[len("forces:"):]
+            elif key.startswith("atom:"):
+                name = _FILE_NAME.get(key[len("atom:"):], key[len("atom:"):])
+            else:
+                continue
+            columns.append((name, view))
+            keys[name] = key
+        state = _file_state(path)
+        try:
+            got = ffast_xyz.parse_into(
+                path, starts, ends, counts, int(first_frame), arrays["numbers"], arrays["positions"],
+                arrays.get("cell"), columns, state["essential"], state["extras"], *_fast_rules(),
+                int(threads))
+        except ffast_xyz.NotFast as exc:
+            raise xa.NotFast(str(exc)) from None
+        state["extras"].update(got["extras"])
+        names = _names(list(dict.fromkeys([*got["values"], *got["texts"]])), {})
+        out = {"frame": {}, "text": {}, "atom_new": {}, "filled": [keys[c] for c in got["seen"]]}
+        for found, target in ((got["values"], out["frame"]), (got["texts"], out["text"])):
+            for key, pair in found.items():
+                if key in names["energies"]:
+                    target[f"energy:{key}"] = pair
+                if key in names["frame_fields"]:
+                    target[f"frame:{key}"] = pair            # float64: FFAST joins frame: keys so
+        for column, (rows, values) in got["new"].items():
+            if values.ndim == 2:
+                out["atom_new"][f"forces:{column}"] = (rows, values)
+            else:
+                out["atom_new"][f"atom:{REV_PROPERTY_NAME_MAP.get(column, column)}"] = (rows, values)
+        return out
+
+    @staticmethod
     def parse(data, first_frame):
         fa = xa.parse_block(data, first_frame, all_values=True)
         names = _names(list(fa.values), {k: (c.ndim, c.shape[-1] if c.ndim == 2 else 1)
@@ -123,6 +170,37 @@ def _names(value_keys, columns):
         "frame_fields": sorted(k for k in value_keys if k not in per_config_properties),
         "atom_columns": atom_columns,
     }
+
+
+_FILE_NAME = {ase: name for name, ase in REV_PROPERTY_NAME_MAP.items()}   # an atom field's column
+
+
+@functools.lru_cache(maxsize=1)
+def _fast_rules():
+    """What the fast parser needs to name things as the Python parser does:
+    element symbols, ASE's names for columns, and the ASE names that are no
+    atom field."""
+    from ase.data import atomic_numbers
+    return (dict(atomic_numbers), dict(REV_PROPERTY_NAME_MAP),
+            set(all_properties) | set(_RESERVED_ARRAY_KEYS))
+
+
+@functools.lru_cache(maxsize=64)
+def _state_of(path, size, mtime_ns):
+    _, layouts = xa.header_info(_first_block(path, 1), 0)
+    essential, extras = xa._signature(layouts[0])
+    return {"essential": [(name, kind, n) for name, kind, n in essential], "extras": dict(extras)}
+
+
+def _file_state(path):
+    """What the fast parser checks a file's frames against, kept per file (and
+    its size and time) across groups and loads: frame 0's columns every frame
+    must list (``_signature``), and the type of each column a frame may lack,
+    as far as the file has been read. A frame that lists other columns, or
+    another type for one, hands the file to the Python parser, which refuses
+    it whenever both fall in one of its batches."""
+    st = os.stat(path)
+    return _state_of(os.path.abspath(path), st.st_size, st.st_mtime_ns)
 
 
 CONTENTS_FRAMES = 100    # frames whose columns and header keys contents() lists

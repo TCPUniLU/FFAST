@@ -1,13 +1,975 @@
-use pyo3::prelude::*;
+//! The fast parser for .xyz / extended-XYZ files (ADR 0100).
+//!
+//! `parse_into` fills arrays that Python made at full size from a group of
+//! frames, on several threads, with Python's lock released. It copies the
+//! rules of FFAST's Python parser (`ffast/io/extxyz_arrays.py`,
+//! `parse_block`) exactly. Where it cannot be sure to give the same value it
+//! raises `NotFast`, and FFAST reads the file with the Python parser:
+//!
+//! - numbers: only plain decimal text (`-1.5e3`, `.5`, `7`) is read here; the
+//!   rest (`1_000`, `nan`, `0x10`, a 128-bit integer) is the Python parser's.
+//!   A header value that might be such a number comes back as text, for Python
+//!   to convert; an atom line with one hands the file over;
+//! - non-ASCII text outside a quoted header value, unusual column layouts, and
+//!   a frame whose columns differ from frame 0's are handed over.
+//!
+//! Every thread writes only its own slices of the arrays and never calls into
+//! Python.
 
-/// The contract number. FFAST accepts only the number it expects.
+// pyo3 0.22's create_exception! checks a cfg this crate does not declare.
+#![allow(unexpected_cfgs)]
+
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+
+use memmap2::Mmap;
+use numpy::{
+    PyArray1, PyArrayMethods, PyReadonlyArray1, PyReadwriteArray1, PyReadwriteArray2,
+    PyReadwriteArray3, PyReadwriteArrayDyn, PyUntypedArrayMethods,
+};
+use pyo3::create_exception;
+use pyo3::exceptions::{PyException, PyValueError};
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
+use rayon::prelude::*;
+
+create_exception!(
+    _ffast_xyz,
+    NotFast,
+    PyException,
+    "The fast parser hands this file to the Python parser; the message says why."
+);
+
+/// The version of the `parse_into` contract this package follows.
+const CONTRACT: u32 = 1;
+
+const PLAIN: &[u8] = b"species:S:1:pos:R:3";
+
+// ── characters and numbers ────────────────────────────────────────────────
+
+/// What `bytes.split()` and `bytes.strip()` treat as whitespace.
+fn line_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+}
+
+/// What `\s` matches in a Python `str` pattern, for ASCII text.
+fn re_space(b: u8) -> bool {
+    line_space(b) || (0x1c..=0x1f).contains(&b)
+}
+
+fn word(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+fn digits(t: &[u8], mut i: usize) -> usize {
+    while i < t.len() && t[i].is_ascii_digit() {
+        i += 1;
+    }
+    i
+}
+
+fn sign(t: &[u8]) -> usize {
+    usize::from(!t.is_empty() && (t[0] == b'+' || t[0] == b'-'))
+}
+
+/// `[+-]?[0-9]+`
+fn int_text(t: &[u8]) -> bool {
+    let s = sign(t);
+    s < t.len() && digits(t, s) == t.len()
+}
+
+/// `[+-]?(d+.?d*|.d+)([eE][+-]?d+)?`: what Rust and Python read alike.
+fn float_text(t: &[u8]) -> bool {
+    let s = sign(t);
+    let mut i = digits(t, s);
+    let mut seen = i - s;
+    if i < t.len() && t[i] == b'.' {
+        let j = digits(t, i + 1);
+        seen += j - i - 1;
+        i = j;
+    }
+    if seen == 0 {
+        return false;
+    }
+    if i < t.len() && (t[i] == b'e' || t[i] == b'E') {
+        let e = i + 1 + sign(&t[i + 1..]);
+        let j = digits(t, e);
+        if j == e {
+            return false;
+        }
+        i = j;
+    }
+    i == t.len()
+}
+
+fn as_str(t: &[u8]) -> &str {
+    // Only called on text float_text/int_text accepted: ASCII.
+    std::str::from_utf8(t).unwrap_or("")
+}
+
+/// A number in an atom line, or None when only Python can read it.
+fn atom_float(t: &[u8]) -> Option<f64> {
+    if float_text(t) {
+        as_str(t).parse().ok()
+    } else {
+        None
+    }
+}
+
+fn atom_int(t: &[u8]) -> Option<i32> {
+    if int_text(t) {
+        as_str(t).parse().ok()
+    } else {
+        None
+    }
+}
+
+/// A header value as `_number` reads it (int, then float), or Text when only
+/// Python can tell (`1_000`, ` 5 `, a number beyond 64 bits, `nan`), or None
+/// when it cannot be a number.
+enum Num {
+    I(i64),
+    F(f64),
+    T(String),
+}
+
+fn header_number(v: &[u8]) -> Option<Num> {
+    if int_text(v) {
+        return Some(match as_str(v).parse::<i64>() {
+            Ok(x) => Num::I(x),
+            Err(_) => Num::T(as_str(v).to_string()),
+        });
+    }
+    if float_text(v) {
+        return as_str(v).parse::<f64>().ok().map(Num::F);
+    }
+    if maybe_number(v) {
+        Some(Num::T(String::from_utf8_lossy(v).into_owned()))
+    } else {
+        None
+    }
+}
+
+/// Whether Python's int() or float() might read `v`: they take spaces around
+/// it, a sign, digits (any script), `_`, `.`, an exponent, or inf, infinity,
+/// nan in any case; nothing else, and no space inside. Non-ASCII text is
+/// Python's to judge.
+fn maybe_number(v: &[u8]) -> bool {
+    if v.iter().any(|&b| b >= 0x80) {
+        return true;
+    }
+    let t = strip(v);
+    let allowed = |b: &u8| {
+        b.is_ascii_digit() || matches!(b.to_ascii_lowercase(), b'+' | b'-' | b'_' | b'.' | b'e' | b'i' | b'n' | b'f' | b't' | b'y' | b'a')
+    };
+    // str.strip() also strips \x1c-\x1f; such a value is too odd to judge here.
+    !t.is_empty() && (t.iter().all(allowed) || t.iter().any(|&b| (0x1c..=0x1f).contains(&b)))
+        && (t.iter().any(u8::is_ascii_digit) || {
+            let lower = t.to_ascii_lowercase();
+            lower.windows(3).any(|w| w == b"inf" || w == b"nan")
+        })
+}
+
+fn shown(t: &[u8]) -> String {
+    format!("'{}'", String::from_utf8_lossy(t))
+}
+
+// ── the header line: `_PAIR`, `_value`, `_cell`, `_pbc` ────────────────────
+
+enum Tok<'a> {
+    Pair(&'a [u8], Option<&'a [u8]>),
+    Junk(&'a [u8]),
+}
+
+/// The next match of `_PAIR` in `h` from `*i`: a key with an optional
+/// `=value` (bare, quoted, braced or bracketed) ending at whitespace, or else
+/// the junk up to the next whitespace. Err: non-ASCII text the ASCII rules
+/// here cannot be sure of.
+fn next_tok<'a>(h: &'a [u8], i: &mut usize) -> Result<Option<Tok<'a>>, String> {
+    let n = h.len();
+    while *i < n && re_space(h[*i]) {
+        *i += 1;
+    }
+    if *i >= n {
+        return Ok(None);
+    }
+    let s = *i;
+    let junk = |i: &mut usize| {
+        let mut j = s;
+        while j < n && !re_space(h[j]) {
+            j += 1;
+        }
+        *i = j;
+        Ok(Some(Tok::Junk(&h[s..j])))
+    };
+    if !(h[s].is_ascii_alphabetic() || h[s] == b'_') {
+        if h[s] >= 0x80 {
+            return Err("non-ASCII text in its header".into());
+        }
+        return junk(i);
+    }
+    let mut j = s + 1;
+    while j < n && word(h[j]) {
+        j += 1;
+    }
+    if j < n && h[j] >= 0x80 {
+        return Err("non-ASCII text in its header".into());
+    }
+    let key = &h[s..j];
+    if j == n || re_space(h[j]) {
+        *i = j;
+        return Ok(Some(Tok::Pair(key, None)));
+    }
+    if h[j] != b'=' || j + 1 == n {
+        return junk(i);
+    }
+    let v = j + 1;
+    let end = match h[v] {
+        q @ (b'"' | b'\'') => {
+            let mut k = v + 1;
+            loop {
+                if k >= n {
+                    return junk(i);
+                }
+                if h[k] == b'\\' {
+                    if k + 1 >= n {
+                        return junk(i);
+                    }
+                    k += 2;
+                    continue;
+                }
+                if h[k] == q {
+                    break k + 1;
+                }
+                k += 1;
+            }
+        }
+        b'{' | b'[' => {
+            let close = if h[v] == b'{' { b'}' } else { b']' };
+            match h[v + 1..].iter().position(|&b| b == close) {
+                Some(p) => v + 1 + p + 1,
+                None => return junk(i),
+            }
+        }
+        c if re_space(c) => return junk(i),
+        _ => {
+            let mut k = v;
+            while k < n && !re_space(h[k]) {
+                if h[k] >= 0x80 {
+                    return Err("non-ASCII text in its header".into());
+                }
+                k += 1;
+            }
+            k
+        }
+    };
+    if end < n && !re_space(h[end]) {
+        return junk(i);
+    }
+    *i = end;
+    Ok(Some(Tok::Pair(key, Some(&h[v..end]))))
+}
+
+/// `_value`: a quoted, braced or bracketed value without its ends, its
+/// backslash escapes undone; a bare value as it is.
+fn value(raw: &[u8]) -> Cow<'_, [u8]> {
+    if !matches!(raw[0], b'"' | b'\'' | b'{' | b'[') {
+        return Cow::Borrowed(raw);
+    }
+    let inner = &raw[1..raw.len() - 1];
+    if !inner.contains(&b'\\') {
+        return Cow::Borrowed(inner);
+    }
+    let mut out = Vec::with_capacity(inner.len());
+    let mut k = 0;
+    while k < inner.len() {
+        if inner[k] == b'\\' && k + 1 < inner.len() {
+            out.push(inner[k + 1]);
+            k += 2;
+        } else {
+            out.push(inner[k]);
+            k += 1;
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// `_TOKENS` (`[^\s,]+`) of an ASCII value.
+fn tokens(v: &[u8]) -> Result<Vec<&[u8]>, String> {
+    if v.iter().any(|&b| b >= 0x80) {
+        return Err("non-ASCII text in a Lattice or pbc value".into());
+    }
+    Ok(v.split(|&b| re_space(b) || b == b',').filter(|t| !t.is_empty()).collect())
+}
+
+fn lattice(v: &[u8]) -> Result<[f64; 9], String> {
+    if v.iter().any(|&b| b >= 0x80) {
+        return Err("non-ASCII text in a Lattice value".into());
+    }
+    let mut cell = [0.0; 9];
+    let mut n = 0;
+    for t in v.split(|&b| re_space(b) || b == b',').filter(|t| !t.is_empty()) {
+        if n == 9 {
+            return Err("Lattice is not 9 numbers".into());
+        }
+        cell[n] = atom_float(t).ok_or_else(|| format!("Lattice holds {}", shown(t)))?;
+        n += 1;
+    }
+    if n != 9 {
+        return Err("Lattice is not 9 numbers".into());
+    }
+    Ok(cell)
+}
+
+fn pbc(v: &[u8]) -> Result<(), String> {
+    let toks = tokens(v)?;
+    let ok = toks.iter().all(|t| {
+        matches!(*t, b"T" | b"F" | b"true" | b"false" | b"True" | b"False" | b"TRUE" | b"FALSE")
+    });
+    if ok && (toks.len() == 1 || toks.len() == 3) {
+        Ok(())
+    } else {
+        Err(format!("pbc={}", shown(v)))
+    }
+}
+
+/// Whether a header without `=` is a plain comment: none of its words is
+/// Properties, Lattice or pbc.
+fn plain(h: &[u8]) -> Result<bool, String> {
+    if h.contains(&b'=') {
+        return Ok(false);
+    }
+    let meaningful = |w: &[u8]| w == b"Properties" || w == b"Lattice" || w == b"pbc";
+    if h.iter().any(|&b| b >= 0x80) {
+        // str.split() also splits at non-ASCII spaces: sure only without the words.
+        let has = [&b"Properties"[..], b"Lattice", b"pbc"].iter().any(|w| h.windows(w.len()).any(|x| x == *w));
+        return if has { Err("non-ASCII text in its header".into()) } else { Ok(true) };
+    }
+    Ok(!h.split(|&b| re_space(b)).any(meaningful))
+}
+
+// ── column layouts: `_layout`, `_signature`, `_is_extra` ───────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+enum Role {
+    Species,
+    Z,
+    Pos,
+    Target(usize),
+    NewForces,
+    NewField,
+    Ignore,
+}
+
+struct Col {
+    name: String,
+    kind: u8,
+    start: usize,
+    n: usize,
+    role: Role,
+    new: usize, // index among the layout's new columns
+}
+
+struct Layout {
+    ncol: usize,
+    cols: Vec<Col>,
+    essential: Vec<(String, u8, usize)>,
+    extras: Vec<(String, u8, usize)>,
+}
+
+fn is_extra(name: &str, kind: u8, n: usize) -> bool {
+    n == 1 && (kind == b'R' || kind == b'I') && !matches!(name, "species" | "Z" | "pos")
+}
+
+fn layout_of(props: &[u8], ctx: &Ctx) -> Result<Layout, String> {
+    let text = std::str::from_utf8(props)
+        .ok()
+        .filter(|t| t.is_ascii())
+        .ok_or("non-ASCII text in Properties")?;
+    let parts: Vec<&str> = text.split(':').collect();
+    if parts.len() % 3 != 0 {
+        return Err(format!("Properties={text} is not name:type:count triples"));
+    }
+    let mut cols = Vec::new();
+    let mut names = HashSet::new();
+    let mut start = 0;
+    for t in parts.chunks(3) {
+        let (name, kind, count) = (t[0], t[1].as_bytes(), t[2].as_bytes());
+        if !int_text(count) || count[0] == b'+' || count[0] == b'-' {
+            return Err(format!("Properties={text}: count {}", t[2]));
+        }
+        let n: usize = t[2].parse().map_err(|_| format!("Properties={text}: count {}", t[2]))?;
+        if kind.len() != 1 || !matches!(kind[0], b'R' | b'I' | b'S') || n == 0 {
+            return Err(format!("Properties={text}: column {name} of type {}", t[1]));
+        }
+        if !names.insert(name) {
+            return Err(format!("Properties={text}: column {name} twice"));
+        }
+        cols.push(Col { name: name.to_string(), kind: kind[0], start, n, role: Role::Ignore, new: 0 });
+        start += n;
+    }
+    if !names.contains("pos") || !(names.contains("species") || names.contains("Z")) {
+        return Err(format!("Properties={text} has no positions or elements"));
+    }
+    if names.contains("species") && names.contains("Z") {
+        return Err(format!("Properties={text} has both species and Z"));
+    }
+    let mut new = 0;
+    for c in cols.iter_mut() {
+        let odd = || format!("Properties={text}: column {} of type {}:{}", c.name, c.kind as char, c.n);
+        let target = ctx.targets.iter().position(|(t, _)| *t == c.name);
+        c.role = match (c.name.as_str(), c.kind, c.n) {
+            ("species", b'S', 1) => Role::Species,
+            ("Z", b'I', 1) => Role::Z,
+            ("pos", b'R', 3) => Role::Pos,
+            ("species" | "Z" | "pos", _, _) => return Err(odd()),
+            (_, b'S', _) => return Err(odd()),
+            ("forces", k, 3) if k != b'R' => return Err(odd()),
+            ("forces", _, n) if n != 3 => return Err(odd()),
+            _ => match target {
+                Some(t) => {
+                    let width = ctx.targets[t].1;
+                    if c.n != width || (width == 3 && c.kind != b'R') {
+                        return Err(odd());
+                    }
+                    Role::Target(t)
+                }
+                None if c.n == 3 && c.name.to_ascii_lowercase().contains("force") => {
+                    if c.kind != b'R' {
+                        return Err(odd()); // the Python parser keeps it as int32
+                    }
+                    Role::NewForces
+                }
+                None if c.n == 1 && !ctx.excluded(&c.name) => Role::NewField,
+                None => Role::Ignore,
+            },
+        };
+        if matches!(c.role, Role::NewForces | Role::NewField) {
+            c.new = new;
+            new += 1;
+        }
+    }
+    let mut essential = Vec::new();
+    let mut extras = Vec::new();
+    for c in &cols {
+        let spec = (c.name.clone(), c.kind, c.n);
+        if is_extra(&c.name, c.kind, c.n) {
+            extras.push(spec);
+        } else {
+            essential.push(spec);
+        }
+    }
+    Ok(Layout { ncol: start, cols, essential, extras })
+}
+
+// ── one group: shared input, per-thread output ─────────────────────────────
+
+struct Ctx<'a> {
+    data: &'a [u8],
+    starts: &'a [u64],
+    ends: &'a [u64],
+    counts: &'a [i64],
+    first_frame: i64,
+    elements: &'a HashMap<Vec<u8>, i64>,
+    rev: &'a HashMap<String, String>,
+    excluded_names: &'a HashSet<String>,
+    targets: &'a [(String, usize)],
+    reference: &'a [(String, u8, usize)],
+    known_extras: &'a HashMap<String, (u8, usize)>,
+}
+
+impl Ctx<'_> {
+    /// A 1-wide column the Python parser does not keep as a field: its ASE
+    /// name is an ASE property or a reserved array.
+    fn excluded(&self, name: &str) -> bool {
+        let ase = self.rev.get(name).map(String::as_str).unwrap_or(name);
+        self.excluded_names.contains(ase)
+    }
+}
+
+struct Chunk<'a> {
+    a: usize,
+    b: usize,
+    atom0: usize,
+    numbers: &'a mut [i64],
+    pos: &'a mut [f64],
+    cell: Option<&'a mut [f64]>,
+    cols: Vec<&'a mut [f64]>,
+}
+
+struct Keyed<T> {
+    slot: HashMap<Vec<u8>, usize>,
+    keys: Vec<(Vec<u8>, Vec<i64>, Vec<T>)>,
+    hint: usize, // frames list their keys in the same order: try the next one first
+}
+
+impl<T> Default for Keyed<T> {
+    fn default() -> Self {
+        Keyed { slot: HashMap::new(), keys: Vec::new(), hint: 0 }
+    }
+}
+
+impl<T> Keyed<T> {
+    fn push(&mut self, key: &[u8], row: i64, x: T) {
+        let i = match self.keys.get(self.hint) {
+            Some(k) if k.0 == key => self.hint,
+            _ => match self.slot.get(key) {
+                Some(&i) => i,
+                None => {
+                    self.slot.insert(key.to_vec(), self.keys.len());
+                    self.keys.push((key.to_vec(), Vec::new(), Vec::new()));
+                    self.keys.len() - 1
+                }
+            },
+        };
+        self.hint = if i + 1 < self.keys.len() { i + 1 } else { 0 };
+        self.keys[i].1.push(row);
+        self.keys[i].2.push(x);
+    }
+
+    fn extend(&mut self, other: Keyed<T>) {
+        for (key, rows, xs) in other.keys {
+            for (r, x) in rows.into_iter().zip(xs) {
+                self.push(&key, r, x);
+            }
+        }
+    }
+}
+
+enum Value {
+    I(i64),
+    F(f64),
+}
+
+struct NewCol {
+    name: String,
+    width: usize,
+    rows: Vec<i64>,
+    vals: Vec<f64>,
+}
+
+#[derive(Default)]
+struct Part {
+    values: Keyed<Value>,
+    texts: Keyed<String>,
+    new: Vec<NewCol>,
+    seen: Vec<bool>,
+    extras: HashMap<String, (u8, usize)>,
+}
+
+impl Part {
+    fn new_col(&mut self, name: &str, width: usize) -> usize {
+        match self.new.iter().position(|c| c.name == name) {
+            Some(i) => i,
+            None => {
+                self.new.push(NewCol { name: name.to_string(), width, rows: Vec::new(), vals: Vec::new() });
+                self.new.len() - 1
+            }
+        }
+    }
+}
+
+fn strip(t: &[u8]) -> &[u8] {
+    let a = t.iter().position(|&b| !line_space(b)).unwrap_or(t.len());
+    let b = t.iter().rposition(|&b| !line_space(b)).map_or(a, |p| p + 1);
+    &t[a..b]
+}
+
+fn parse_chunk(ctx: &Ctx, chunk: Chunk) -> Result<Part, String> {
+    let Chunk { a, b, atom0, numbers, pos, mut cell, mut cols } = chunk;
+    let mut part = Part { seen: vec![false; ctx.targets.len()], ..Default::default() };
+    let mut layouts: Vec<Layout> = Vec::new();
+    let mut index: HashMap<Vec<u8>, usize> = HashMap::new(); // Properties -> layout
+    let mut current: Option<(Vec<u8>, usize)> = None; // the last frame's
+    let mut extras = ctx.known_extras.clone();
+    let mut symbols: HashMap<&[u8], i64> = HashMap::new();
+    let mut last_symbol: (&[u8], i64) = (b"", 0);
+    let mut fields: Vec<(&[u8], Num)> = Vec::with_capacity(32); // one frame's header numbers
+    let mut toks: Vec<&[u8]> = Vec::with_capacity(16);
+    let mut new_index: Vec<usize> = Vec::new();
+    let mut atom = 0usize; // within the chunk
+    for row in a..b {
+        let frame = ctx.first_frame + row as i64;
+        let block = &ctx.data[ctx.starts[row] as usize..ctx.ends[row] as usize];
+        let mut lines = block.split(|&c| c == b'\n');
+        let count = strip(lines.next().unwrap_or(b""));
+        if !int_text(count) || as_str(count).parse::<i64>().ok() != Some(ctx.counts[row]) {
+            return Err(format!("frame {frame}: its atom count line {} is not {}", shown(count), ctx.counts[row]));
+        }
+        let header = lines.next().ok_or_else(|| format!("frame {frame} has no header line"))?;
+        std::str::from_utf8(header).map_err(|_| format!("frame {frame}: its header is not UTF-8 text"))?;
+
+        // The header: Properties, Lattice, pbc and the numbers, as parse_block.
+        let mut props: Cow<[u8]> = Cow::Borrowed(PLAIN);
+        let mut lat: Option<[f64; 9]> = None;
+        fields.clear();
+        if !plain(header).map_err(|e| format!("frame {frame}: {e}"))? {
+            let mut i = 0;
+            while let Some(tok) = next_tok(header, &mut i).map_err(|e| format!("frame {frame}: {e}"))? {
+                let (key, raw) = match tok {
+                    Tok::Junk(t) => return Err(format!("frame {frame}: cannot read {} in its header", shown(t))),
+                    Tok::Pair(k, r) => (k, r),
+                };
+                let Some(raw) = raw else {
+                    if matches!(key, b"Properties" | b"Lattice" | b"pbc") {
+                        return Err(format!("frame {frame}: {} without a value in its header", as_str(key)));
+                    }
+                    continue;
+                };
+                let v = value(raw);
+                match key {
+                    b"Properties" => props = v,
+                    b"Lattice" => lat = Some(lattice(&v).map_err(|e| format!("frame {frame}: {e}"))?),
+                    b"pbc" => pbc(&v).map_err(|e| format!("frame {frame}: {e}"))?,
+                    k if k.eq_ignore_ascii_case(b"uid") || v.starts_with(b"_JSON ") => {}
+                    k => {
+                        let Some(num) = header_number(&v) else { continue };
+                        match fields.iter_mut().find(|(f, _)| *f == k) {
+                            None => fields.push((k, num)),
+                            Some((_, old)) => {
+                                // Python: a later number wins; a later text
+                                // may or may not be one.
+                                if matches!(num, Num::T(_)) {
+                                    return Err(format!("frame {frame}: {} given twice", as_str(k)));
+                                }
+                                *old = num;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (k, num) in fields.drain(..) {
+            match num {
+                Num::I(x) => part.values.push(k, row as i64, Value::I(x)),
+                Num::F(x) => part.values.push(k, row as i64, Value::F(x)),
+                Num::T(t) => part.texts.push(k, row as i64, t),
+            }
+        }
+        let f = row - a;
+        if let Some(c) = cell.as_deref_mut() {
+            c[f * 9..f * 9 + 9].copy_from_slice(&lat.unwrap_or([0.0; 9]));
+        }
+
+        // The columns: the same essential ones as frame 0, extras of one type.
+        if current.as_ref().is_none_or(|(p, _)| p.as_slice() != props.as_ref()) {
+            let li = match index.get(props.as_ref()) {
+                Some(&li) => li,
+                None => {
+                    let lay = layout_of(&props, ctx).map_err(|e| format!("frame {frame}: {e}"))?;
+                    if lay.essential.as_slice() != ctx.reference {
+                        return Err(format!("frame {frame} lists the columns {}, unlike frame 0", as_str(&props)));
+                    }
+                    for (name, kind, n) in &lay.extras {
+                        if *extras.entry(name.clone()).or_insert((*kind, *n)) != (*kind, *n) {
+                            return Err(format!("frame {frame}: column {name} changes its type"));
+                        }
+                    }
+                    layouts.push(lay);
+                    index.insert(props.to_vec(), layouts.len() - 1);
+                    layouts.len() - 1
+                }
+            };
+            new_index.clear();
+            for c in &layouts[li].cols {
+                match c.role {
+                    Role::NewForces | Role::NewField => new_index.push(part.new_col(&c.name, c.n)),
+                    Role::Target(t) => part.seen[t] = true,
+                    _ => {}
+                }
+            }
+            current = Some((props.to_vec(), li));
+        }
+        let lay = &layouts[current.as_ref().map_or(0, |c| c.1)];
+
+        // The atom lines.
+        let n = ctx.counts[row] as usize;
+        for _ in 0..n {
+            let line = lines.next().ok_or_else(|| format!("frame {frame} has too few atom lines"))?;
+            toks.clear();
+            toks.extend(line.split(|&c| line_space(c)).filter(|t| !t.is_empty()));
+            if toks.len() != lay.ncol {
+                return Err(format!("frame {frame}: an atom line has {} columns, not {}", toks.len(), lay.ncol));
+            }
+            let bad = |t: &[u8]| format!("frame {frame}: {} in an atom line", shown(t));
+            for c in &lay.cols {
+                let cell_toks = &toks[c.start..c.start + c.n];
+                match c.role {
+                    Role::Species => {
+                        let sym = cell_toks[0];
+                        let known = if sym == last_symbol.0 { Some(&last_symbol.1) } else { symbols.get(sym) };
+                        let z = match known {
+                            Some(&z) => z,
+                            None => {
+                                if !sym.is_ascii() {
+                                    return Err(bad(sym));
+                                }
+                                let mut key = sym.to_ascii_lowercase();
+                                key[0] = key[0].to_ascii_uppercase();
+                                let z = *ctx
+                                    .elements
+                                    .get(&key)
+                                    .ok_or_else(|| format!("unknown element '{}'", as_str(&key)))?;
+                                symbols.insert(sym, z);
+                                z
+                            }
+                        };
+                        numbers[atom] = z;
+                        last_symbol = (sym, z);
+                    }
+                    Role::Z => numbers[atom] = atom_int(cell_toks[0]).ok_or_else(|| bad(cell_toks[0]))? as i64,
+                    Role::Pos => {
+                        for k in 0..3 {
+                            pos[atom * 3 + k] = atom_float(cell_toks[k]).ok_or_else(|| bad(cell_toks[k]))?;
+                        }
+                    }
+                    Role::Target(t) => {
+                        let out = &mut cols[t];
+                        for k in 0..c.n {
+                            out[atom * c.n + k] = number(c.kind, cell_toks[k]).ok_or_else(|| bad(cell_toks[k]))?;
+                        }
+                    }
+                    Role::NewForces | Role::NewField => {
+                        let col = &mut part.new[new_index[c.new]];
+                        col.rows.push((atom0 + atom) as i64);
+                        for t in cell_toks {
+                            col.vals.push(number(c.kind, t).ok_or_else(|| bad(t))?);
+                        }
+                    }
+                    Role::Ignore => {
+                        for t in cell_toks {
+                            number(c.kind, t).ok_or_else(|| bad(t))?;
+                        }
+                    }
+                }
+            }
+            atom += 1;
+        }
+        if lines.any(|l| !strip(l).is_empty()) {
+            return Err(format!("frame {frame} has more lines than its atom count"));
+        }
+    }
+    part.extras = extras;
+    Ok(part)
+}
+
+fn number(kind: u8, t: &[u8]) -> Option<f64> {
+    if kind == b'I' {
+        atom_int(t).map(f64::from)
+    } else {
+        atom_float(t)
+    }
+}
+
+// ── Python ─────────────────────────────────────────────────────────────────
+
+/// The contract number, as `CONTRACT` in the Python package.
 #[pyfunction]
 fn contract() -> u32 {
-    1
+    CONTRACT
+}
+
+/// Fill the arrays from the frames at bytes `starts[i]..ends[i]` of `path`.
+///
+/// `numbers`, `positions`, `cell` (or None) and every array of `columns`
+/// ({column name: (atoms,) or (atoms, 3) float64}) are this group's rows.
+/// `reference`: frame 0's essential columns `[(name, type, count)]`;
+/// `extras`: the 1-wide columns a frame may lack, {name: (type, count)}, as
+/// earlier groups of the file listed them;
+/// `elements`: symbol -> atomic number; `rev`, `excluded`: a 1-wide column is
+/// no field when `rev.get(name, name)` is in `excluded`.
+///
+/// Returns `{"values": {key: (rows, int64 or float64)}, "texts": {key: (rows,
+/// [str])}, "new": {column: (atom rows, float64 values)}, "seen": [column],
+/// "extras": {name: (type, count)}}`,
+/// rows counted within the group. Raises NotFast for anything handed over.
+#[pyfunction]
+#[pyo3(signature = (path, starts, ends, counts, first_frame, numbers, positions, cell, columns, reference, extras, elements, rev, excluded, threads))]
+#[allow(clippy::too_many_arguments)]
+fn parse_into<'py>(
+    py: Python<'py>,
+    path: &str,
+    starts: PyReadonlyArray1<u64>,
+    ends: PyReadonlyArray1<u64>,
+    counts: PyReadonlyArray1<i64>,
+    first_frame: i64,
+    mut numbers: PyReadwriteArray1<i64>,
+    mut positions: PyReadwriteArray2<f64>,
+    cell: Option<PyReadwriteArray3<f64>>,
+    columns: Vec<(String, PyReadwriteArrayDyn<f64>)>,
+    reference: Vec<(String, String, usize)>,
+    extras: HashMap<String, (String, usize)>,
+    elements: HashMap<String, i64>,
+    rev: HashMap<String, String>,
+    excluded: HashSet<String>,
+    threads: usize,
+) -> PyResult<Bound<'py, PyDict>> {
+    let file = std::fs::File::open(path)?;
+    // SAFETY: the file is only read; FFAST's frame list fails on a file changed since.
+    let data = unsafe { Mmap::map(&file)? };
+    let starts = starts.as_slice()?;
+    let ends = ends.as_slice()?;
+    let counts = counts.as_slice()?;
+    let n = starts.len();
+    if ends.len() != n || counts.len() != n {
+        return Err(PyValueError::new_err("starts, ends and counts differ in length"));
+    }
+    if starts.iter().zip(ends).any(|(&s, &e)| s > e || e as usize > data.len()) {
+        return Err(NotFast::new_err("a frame's bytes lie outside the file; it changed"));
+    }
+    let atoms = counts.iter().map(|&c| c.max(0) as usize).sum::<usize>();
+    let elements: HashMap<Vec<u8>, i64> = elements.into_iter().map(|(k, v)| (k.into_bytes(), v)).collect();
+    let reference: Vec<(String, u8, usize)> =
+        reference.into_iter().map(|(name, kind, n)| (name, kind.bytes().next().unwrap_or(b'?'), n)).collect();
+    let known_extras: HashMap<String, (u8, usize)> =
+        extras.into_iter().map(|(name, (kind, n))| (name, (kind.bytes().next().unwrap_or(b'?'), n))).collect();
+
+    let mut columns = columns;
+    let mut targets = Vec::new();
+    let mut col_slices = Vec::new();
+    for (name, array) in columns.iter_mut() {
+        let width = match array.shape() {
+            [rows] if *rows == atoms => 1,
+            [rows, w] if *rows == atoms => *w,
+            _ => return Err(PyValueError::new_err(format!("column {name}: not one row per atom"))),
+        };
+        targets.push((name.clone(), width));
+        col_slices.push(array.as_slice_mut()?);
+    }
+    let numbers = numbers.as_slice_mut()?;
+    let pos = positions.as_slice_mut()?;
+    let mut cell = cell;
+    let cell_s = match cell.as_mut() {
+        Some(c) => Some(c.as_slice_mut()?),
+        None => None,
+    };
+    if numbers.len() != atoms || pos.len() != atoms * 3 || cell_s.as_ref().is_some_and(|c| c.len() != n * 9) {
+        return Err(PyValueError::new_err("the arrays do not fit the frames' atom counts"));
+    }
+
+    // One chunk per piece of the frames, each with its own slices.
+    let threads = threads.max(1);
+    let per = n.div_ceil(threads * 4).max(1);
+    let mut chunks = Vec::new();
+    let (mut rn, mut rp, mut rc) = (numbers, pos, cell_s);
+    let mut rcols = col_slices;
+    let (mut a, mut atom0) = (0usize, 0usize);
+    while a < n {
+        let b = (a + per).min(n);
+        let m = counts[a..b].iter().map(|&c| c.max(0) as usize).sum::<usize>();
+        let (n0, n1) = std::mem::take(&mut rn).split_at_mut(m);
+        let (p0, p1) = std::mem::take(&mut rp).split_at_mut(m * 3);
+        let c0 = match rc.take() {
+            Some(c) => {
+                let (x, y) = c.split_at_mut((b - a) * 9);
+                rc = Some(y);
+                Some(x)
+            }
+            None => None,
+        };
+        let mut cols = Vec::with_capacity(rcols.len());
+        for (k, rest) in rcols.iter_mut().enumerate() {
+            let (x, y) = std::mem::take(rest).split_at_mut(m * targets[k].1);
+            *rest = y;
+            cols.push(x);
+        }
+        rn = n1;
+        rp = p1;
+        chunks.push(Chunk { a, b, atom0, numbers: n0, pos: p0, cell: c0, cols });
+        a = b;
+        atom0 += m;
+    }
+
+    let ctx = Ctx {
+        data: &data,
+        starts,
+        ends,
+        counts,
+        first_frame,
+        elements: &elements,
+        rev: &rev,
+        excluded_names: &excluded,
+        targets: &targets,
+        reference: &reference,
+        known_extras: &known_extras,
+    };
+    let parts: Result<Vec<Part>, String> = py.allow_threads(|| {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(|e| e.to_string())?;
+        pool.install(|| chunks.into_par_iter().map(|c| parse_chunk(&ctx, c)).collect())
+    });
+    let parts = parts.map_err(NotFast::new_err)?;
+
+    // Join the chunks in order.
+    let mut values: Keyed<Value> = Keyed::default();
+    let mut texts: Keyed<String> = Keyed::default();
+    let mut new: Vec<NewCol> = Vec::new();
+    let mut seen = vec![false; targets.len()];
+    let mut extras = known_extras.clone();
+    for part in parts {
+        for (name, spec) in part.extras {
+            if *extras.entry(name.clone()).or_insert(spec) != spec {
+                return Err(NotFast::new_err(format!("column {name} changes its type")));
+            }
+        }
+        values.extend(part.values);
+        texts.extend(part.texts);
+        for col in part.new {
+            match new.iter_mut().find(|c| c.name == col.name) {
+                Some(c) if c.width == col.width => {
+                    c.rows.extend(col.rows);
+                    c.vals.extend(col.vals);
+                }
+                Some(_) => return Err(NotFast::new_err(format!("column {} changes its width", col.name))),
+                None => new.push(col),
+            }
+        }
+        for (s, p) in seen.iter_mut().zip(part.seen) {
+            *s |= p;
+        }
+    }
+
+    let out = PyDict::new_bound(py);
+    let vals = PyDict::new_bound(py);
+    for (key, rows, xs) in values.keys {
+        let rows = PyArray1::from_vec_bound(py, rows);
+        let key = String::from_utf8_lossy(&key).into_owned();
+        if xs.iter().all(|x| matches!(x, Value::I(_))) {
+            let ints: Vec<i64> = xs.iter().map(|x| if let Value::I(i) = x { *i } else { 0 }).collect();
+            vals.set_item(key, (rows, PyArray1::from_vec_bound(py, ints)))?;
+        } else {
+            // As np.array makes a list mixing ints and floats.
+            let floats: Vec<f64> = xs.iter().map(|x| match x { Value::I(i) => *i as f64, Value::F(f) => *f }).collect();
+            vals.set_item(key, (rows, PyArray1::from_vec_bound(py, floats)))?;
+        }
+    }
+    let txts = PyDict::new_bound(py);
+    for (key, rows, xs) in texts.keys {
+        txts.set_item(String::from_utf8_lossy(&key).into_owned(), (PyArray1::from_vec_bound(py, rows), PyList::new_bound(py, xs)))?;
+    }
+    let news = PyDict::new_bound(py);
+    for col in new {
+        let rows = col.rows.len();
+        let vals = PyArray1::from_vec_bound(py, col.vals);
+        let vals = if col.width == 1 { vals.into_any() } else { vals.reshape([rows, col.width])?.into_any() };
+        news.set_item(col.name, (PyArray1::from_vec_bound(py, col.rows), vals))?;
+    }
+    let seen: Vec<&str> = targets.iter().zip(&seen).filter(|(_, s)| **s).map(|((name, _), _)| name.as_str()).collect();
+    out.set_item("values", vals)?;
+    out.set_item("texts", txts)?;
+    out.set_item("new", news)?;
+    out.set_item("seen", seen)?;
+    let found = PyDict::new_bound(py);
+    for (name, (kind, n)) in extras {
+        found.set_item(name, ((kind as char).to_string(), n))?;
+    }
+    out.set_item("extras", found)?;
+    Ok(out)
 }
 
 #[pymodule]
 fn _ffast_xyz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(contract, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_into, m)?)?;
+    m.add("NotFast", m.py().get_type_bound::<NotFast>())?;
     Ok(())
 }
