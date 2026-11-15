@@ -55,9 +55,19 @@ environment files while the app is running. Move the venv out and reinstall.
 confirm it has `R`, `E`, `F`, `z`. For ASE formats, confirm ASE itself can read
 it: `python -c "import ase.io; ase.io.read('file')"`.
 
-**"Fingerprint mismatch" when loading predictions.** The dataset file is not the
-one the predictions were computed against. Byte-for-byte, not "the same
-molecule". Regenerate the predictions or find the original file.
+**A prediction is refused.** Check the error's frame and atom counts and element
+order against the selected dataset. FFAST refuses a different number of frames,
+a different atom count in a frame, or different elements. For a strided or
+energy-sampled dataset, supply predictions for the full original file; FFAST
+reads the same frames the dataset kept.
+
+**A prediction loads with a position or unit warning.** Positions differing by
+more than 0.001 Å and different unit labels produce warnings, rather than
+refusals. Check that the prediction belongs to the dataset and uses the same
+units; FFAST never converts values. Matching files need not be byte-for-byte
+identical. Element, position and unit checks use only information present in
+the prediction file, and matching elements alone do not prove that two files
+describe the same trajectory. See [Predictions](usage.md#predictions).
 
 **Models with hash names appear in the sidebar.** Those are ghost models,
 reconstructed from cached predictions when the original model file was not
