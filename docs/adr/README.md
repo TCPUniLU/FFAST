@@ -95,7 +95,7 @@ things came up.
 - [0060](0060-every-browser-3d-view-is-one-view-object.md) Every 3D view in the browser is one view object, carrying its own sidebar settings (accepted)
 - [0063](0063-the-web-client-looks-like-a-journal-figure.md) The web client looks like a journal figure: panel letters and captions, labelled peaks, one set of tokens (built)
 - [0066](0066-every-warning-and-error-is-also-a-pop-up.md) Every warning and error is also a pop-up (built)
-- [0088](0088-a-guided-tour-teaches-the-web-client-step-by-step.md) A guided tour teaches the web client step by step: tours are data, started from File ▸ Tours, locked and dimmed, Back can undo (proposed)
+- [0088](0088-a-guided-tour-teaches-the-web-client-step-by-step.md) A guided tour teaches the web client step by step: tours are data, started from the File menu, locked and dimmed, Back can undo; First steps and loading tours built, LAMMPS tours covered by 0092 (built)
 
 ## Running on a cluster
 

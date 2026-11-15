@@ -1,10 +1,13 @@
 # A guided tour teaches the web client step by step
 
-Status: Proposed 2026-11-06. Not built. Decided from a clickable mockup
+Status: Built 2026-11-06 (`1bd2d67d`, extended in `e9cd18d3`). The loading
+tour followed on 2026-11-07 (`570ae886`); LAMMPS tours are covered by ADR 0092.
+Decided from a clickable mockup
 (https://claude.ai/artifact/1FFBDszXAZESySVmmSuD6j; a copy is in
 `docs/research/guided-tour-2026-11-06/mockup.html`). Plan:
-`docs/implementation/2026-11-06-guided-tour.md`. Client only: no server,
-protocol or session-file change. Builds on ADR 0055 (layout, hint bar, action
+`docs/implementation/2026-11-06-guided-tour.md`. The runner and initial tour
+are client only: no server, protocol or session-file change. Builds on
+ADR 0055 (layout, hint bar, action
 list) and ADR 0050 (client modules).
 
 ## The problem
@@ -23,14 +26,15 @@ only, easy to remove.
 
 **A tour is a list of steps. Each step lights up one part of the screen.**
 Everything else is dimmed and cannot be clicked. A ring marks the lit area. A
-box next to it shows "Step 3 of 7", a row of dots, a short title, one or two
+box next to it shows "Step 3 of 11", a row of dots, a short title, one or two
 sentences, and these buttons:
 
 - **Skip tour**, always. Esc does the same.
 - **Back**, on every step but the first.
-- **Next** on a "look at this" step. A "do this" step has no Next. It ends when
-  the user does the thing (clicks Force error, drags the slider), and until then
-  the box says what it is waiting for ("Drag the slider").
+- **Next** on a "look at this" step. A "do this" step has no Next while it
+  waits. The box says what it is waiting for ("Drag the slider"). Doing the
+  action advances automatically, or reveals Next when the step sets `stay`
+  so the user can keep trying the control before moving on.
 
 Tab moves only between the box and the lit controls. Focus goes to the lit
 control on a "do this" step, and to Next otherwise. When the tour ends, focus
@@ -69,6 +73,8 @@ of steps. Adding a guide means adding entries, not changing the runner.
 | `side` | Where the box goes: top, bottom, left, right, or inside the lit area. |
 | `title`, `body` | The text. |
 | `until` | The app event that ends a "do this" step. No `until` means a Next button. |
+| `accept`, `refused` | Check an event's detail before accepting it, and explain a rejected action in the wait text. |
+| `stay` | Once the action is done, show Next instead of advancing automatically. |
 | `wait` | Text or a function, refreshed on every app event while waiting for `until`. |
 | `links` | Documentation links (`label`, `href`), opened in a new tab so the tour stays in place. |
 | `actions` | Buttons in the box: `{label, primary?, run, enabled?}`. `enabled()` refreshes on every app event; a waiting step uses an action once. |
@@ -90,10 +96,11 @@ panels that open or close without extra code.
 
 **App events are the contract between the app and the tours.** `app.js` sends a
 short list of named events: `example-loaded`, `example-load-failed`,
-`dataset-deleted`, `frame-changed`, `quick-style-applied`. A new tour adds the
-events it needs to this list. Tours only listen.
-They never call into the app, except through `undo`, which uses the existing
-delete request (`DELETE_OBJECT`).
+`dataset-deleted`, `frame-changed`, `quick-style-applied`, `tab-selected`,
+`point-picked`. A new tour adds the events it needs to this list. The runner
+listens to events without knowing the app. Tour steps read app state and use
+`prepare`, `actions` and `undo` to call existing app operations, such as
+switching tabs, loading files or deleting the example pair.
 
 **A tour stops instead of getting stuck.** If a step's target is missing or has
 no size, the tour ends with a message naming the step ("Tour stopped: 'Move
@@ -104,28 +111,40 @@ fails, the tour ends with the server's reason. One known case is a server
 installed without the repository, which has no examples
 (`ServerSession._on_load_example`).
 
-**The first tour, "First steps", has 7 steps.** It runs on the example pair in
-`examples/data` (100 small molecules from SPICE with MACE forces):
+**The first tour, "First steps", has up to 11 steps.** It runs on the example
+pair in `examples/data` (100 small molecules from SPICE with MACE forces):
 
 | # | Lit area | What it says | Ends when |
 |---|---|---|---|
 | 1 | Load Example | A small example: a dataset and one model's predictions for it. | Example loaded (skipped if already loaded; undone by Back) |
 | 2 | 3D view | One frame: the atoms of one geometry. Drag to rotate, scroll to zoom. | Next |
-| 3 | Frame slider | Each frame is one geometry with its reference energy and forces. | Slider moved |
+| 3 | Frame slider | Each frame is one geometry with its reference energy and forces. | Slider moved, then Next |
 | 4 | Datasets and Predictions lists | Datasets hold the reference; predictions are a model's answers for the same frames. | Next |
 | 5 | Quick style ▸ Force error | Colours each atom by how far the model's force is from the reference. | Force error applied |
 | 6 | 3D view and frame slider | How to read the colours and the colour bar; drag the slider to compare frames. | Next |
-| 7 | Hint bar | Suggested next steps; tours are in File ▸ Tours. | Done (skipped if the hint bar was dismissed) |
+| 7 | Basic Errors tab | Open the error plots. | Basic Errors selected |
+| 8 | Basic Errors panels | Distributions count frames by error; timelines show error frame by frame. | Next |
+| 9 | Forces MAE timeline | Click a high point to inspect a bad frame. | Point clicked |
+| 10 | 3D view and frame slider | Inspect the chosen frame, coloured by force error. | Next |
+| 11 | Hint bar | Suggested next steps; tours are in the File menu. | Done (skipped if the hint bar was dismissed) |
 
-Only this tour is built now. The mockup's second tour, "Playback", existed only
-to show that steps can be shared between tours.
+Steps 7–10 are skipped if the Basic Errors tab or its Forces MAE timeline is
+missing. The loading step is skipped when data is already open.
 
-**Tests.** The runner is tested on its own, on a plain test page. One browser
-test per tour clicks through every step on the example, including one Back that
-undoes step 1. Another loads the example and checks that every target of every
-tour finds an element, so a renamed control breaks a test, not the tour. (A
-check against `index.html` alone would not work: some targets, such as the
-Quick style buttons, are made by script.)
+Four tours now ship: **First steps**, **Load a dataset and a prediction**,
+**Watch a LAMMPS run**, and **Run your own LAMMPS**. The loading tour uses the
+real file browser to load molecular and periodic example pairs. See
+[ADR 0092](0092-lammps-tutorials-use-practice-runs-that-wait-for-the-user.md)
+for the LAMMPS practice runs. The mockup's "Playback" tour remains only a
+demonstration of shared steps.
+
+**Tests.** The runner is tested on its own, on a plain test page.
+`tests/ffast/renderers/web/test_web_tour.py` exercises First steps and loading,
+including Back undoing the example load, and checks the non-LAMMPS tours'
+targets in the live page. The two LAMMPS tours have separate browser tests
+using their practice runs. A renamed control breaks a test instead of leaving
+a tour without a target. (A check against `index.html` alone would not work:
+some targets, such as the Quick style buttons, are made by script.)
 
 ## Alternatives that were live
 
