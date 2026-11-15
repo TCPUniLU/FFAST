@@ -138,6 +138,8 @@ things came up.
 - [0099](0099-the-server-sends-the-points-a-plot-can-show.md) The server sends the points a plot can show: a large result is thinned on the server to the plot's pixels (line: first/lowest/highest/last per column; dots: one per 2 px cell) with frame numbers; small results still come whole; a zoom asks again; CSV fetches everything on click (accepted, built)
 - [0100](0100-a-level-2-reader-can-parse-with-a-fast-parser.md) A Level 2 reader can parse with a fast parser: an optional compiled package (`ffast-xyz`, Rust) fills arrays FFAST made, on threads, in groups Python drives; same values and types as the Python parser, which stays the fallback, with a warning; plain reads, not a mapped file; installed by `ffast install-fast-reader` from GitHub Releases or built with Rust, not PyPI; MeluXina first open 4.6× (5 GB) and 2.6× (32 GB, disk-bound) (accepted, built)
 
+- [0101](0101-the-cluster-offers-to-install-the-fast-reader.md) A cluster offers to install the optional fast reader before its first relevant file load; one offer and install across windows, progress and Python fallback, only in FFAST-provisioned environments (accepted, built)
+
 ## Format
 
 There is no template file. Copy a recent one. What matters is that it opens with

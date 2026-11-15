@@ -1,4 +1,7 @@
 Status: Accepted 2026-11-14; built 9d16f7dc..2b905ac1 (see "Measured").
+Updated by [ADR 0101](0101-the-cluster-offers-to-install-the-fast-reader.md):
+cluster provisioning stages source for an optional build, and the browser
+offers installation before a relevant cluster file load in a managed venv.
 Changes ADR 0076 (decision 3: our own extxyz reader, in Python) and adds to
 ADR 0095 (decision 3: Level 2). Plan:
 `docs/implementation/2026-11-14-rust-reader.md`.

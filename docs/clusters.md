@@ -65,7 +65,18 @@ and provide `ffast_server_cmd`, for example:
 These are fields to add to your profile. The command must end by launching
 `ffast-server` on the node, with FFAST and its dependencies already installed.
 When `provision` is true, `ffast_server_cmd` is ignored. Automatic setup does
-not install the optional [fast .xyz reader](installation.md#the-fast-xyz-reader).
+not install the optional [fast .xyz reader](installation.md#the-fast-xyz-reader)
+until you choose it. Before the first `.xyz` or `.extxyz` dataset or prediction
+load, FFAST offers **Install and load** or **Load with Python** when the reader
+is missing or needs an update. Installation runs in the cluster server's venv;
+the dialog shows progress and expandable details. If it fails, choose
+**Continue with Python** or cancel the load. Cancelling the load leaves any
+installation already started running on the cluster.
+
+**Don't ask again for this cluster** remembers your choice for this profile in
+this browser. Other windows sharing the server do not repeat the offer or
+start duplicate installs. Manually managed environments show installation
+instructions instead of an Install button.
 
 Remote data is loaded by path on the cluster filesystem. For ASE files the server
 reads the first frame and lets you choose which keys are energy and forces, and

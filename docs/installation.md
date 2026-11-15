@@ -86,6 +86,15 @@ If none of this works, FFAST still runs and reads these files with the slower
 Python parser. Run the command again after updating FFAST if FFAST says the
 fast reader is too old.
 
+For a [cluster connection](clusters.md), the browser offers to install the
+reader before the first `.xyz` or `.extxyz` dataset or prediction load that
+needs it. **Install and load** installs in the FFAST-provisioned server venv,
+shows progress, then continues the load. **Load with Python** skips installation;
+you can remember that choice per cluster profile. A manually managed server
+shows instructions instead. If an old native reader already loaded in the
+server cannot be replaced in memory, FFAST asks you to use Python for this load
+and start a new server job to activate the installed update.
+
 A new reader release is made by pushing a tag `ffast-xyz-v<version>`, where
 `<version>` is the one in `rust/ffast-xyz/Cargo.toml` and in `RELEASE` in
 `ffast/readers/install_fast.py`.
