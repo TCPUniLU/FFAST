@@ -25,6 +25,32 @@ from cluster.bootstrap import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_reader_source_archive_contains_no_laptop_binaries(tmp_path):
+    import zipfile
+    archive = bootstrap.reader_source_archive(REPO_ROOT, tmp_path)
+    with zipfile.ZipFile(archive) as source:
+        assert set(source.namelist()) == set(bootstrap._READER_FILES)
+        assert all(not name.startswith('/') and '..' not in name for name in source.namelist())
+
+
+def test_a_changed_reader_source_reprovisions_the_node(tmp_path):
+    root = _checkout(tmp_path)
+    source = root / 'rust/ffast-xyz/src/lib.rs'
+    source.parent.mkdir(parents=True)
+    source.write_text('old source')
+    first = install_marker(root, [])
+    source.write_text('new source')
+    assert first != install_marker(root, [])
+
+
+def test_reader_source_is_extracted_in_the_jobs_venv_before_the_server_starts():
+    cmd = provision_launch_cmd('~/venv', '~/ffast.whl', [], [], '~/venv/marker',
+                               'hash', reader_archive='~/source.zip')
+    assert 'python -m zipfile -e ~/source.zip ~/venv/ffast-xyz' in cmd
+    assert cmd.index('source.zip') < cmd.index('uv pip install --no-deps --reinstall')
+    assert cmd.endswith('ffast-server')
+
+
 def test_dist_name_strips_version_and_extras():
     assert _dist_name("torch>=2.8.0") == "torch"
     assert _dist_name("scikit-learn>=1.6.1") == "scikit-learn"

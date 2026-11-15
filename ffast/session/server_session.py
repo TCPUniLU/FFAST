@@ -207,9 +207,10 @@ class ServerSession:
             ForgetLiveRunRequest, MakeReferenceRequest, RunWithFfastRequest, WriteRunWithFfastRequest,
             SubmitJobRequest, WatchJobRequest, ScanRunFolderRequest,
             ScoreDialogInfoRequest, ScoreDatasetRequest, ContinueScoringRequest,
-            StoredResultsRequest,
+            StoredResultsRequest, FastReaderRequest,
         )
         self._handlers: dict[str, _Route] = {
+            control.FAST_READER:                _Route(self._on_fast_reader, ["action"], FastReaderRequest),
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint", "?delete_results"], DeleteObjectRequest),
@@ -355,6 +356,30 @@ class ServerSession:
             trace.record_error(f"{event} failed: {exc!r}", exc)
             raise
         trace.record("done", f"{event} {(time.perf_counter() - started) * 1000:.0f} ms")
+
+    async def _on_fast_reader(self, action) -> None:
+        from ffast.readers.setup import FastReaderSetup
+
+        setup = getattr(self.env, "fast_reader_setup", None)
+        if setup is None:
+            setup = self.env.fast_reader_setup = FastReaderSetup()
+        request_id = replies.current()
+
+        def progress(line):
+            self._emit_or_drop(replies.reply(
+                control.FAST_READER_STATE, (), {"line": line},
+                final=False, request_id=request_id), "fast-reader progress")
+
+        if action == "offer":
+            result = setup.offer()
+        elif action == "skip":
+            result = setup.skip()
+        elif action == "install":
+            result = await setup.install(progress)
+        else:
+            result = await setup.wait(progress)
+        await self._emit(replies.reply(control.FAST_READER_STATE, (), result,
+                                      error=result.get("error")))
 
     async def _on_trace(self, kind, text) -> None:
         """A line the browser reports: a click, a change, an error in the page."""

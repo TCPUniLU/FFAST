@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import zipfile
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -42,6 +43,20 @@ DEFAULT_VENV = "~/.ffast/venv"
 # Data files the wheel ships next to the code (pyproject package-data). The code
 # fingerprint leaves JSON out, so the install marker adds them.
 _SHIPPED_JSON = ("config/default.json", "ffast/config/default.json")
+_READER_FILES = ("Cargo.toml", "Cargo.lock", "pyproject.toml", "src/lib.rs",
+                 "python/ffast_xyz/__init__.py")
+
+
+def reader_source_archive(root: Path, folder: Path) -> Path | None:
+    """Stage only the reader source, never a laptop's binaries or target/."""
+    source = root / "rust" / "ffast-xyz"
+    if not all((source / name).is_file() for name in _READER_FILES):
+        return None
+    archive = folder / "ffast-xyz-source.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as out:
+        for name in _READER_FILES:
+            out.write(source / name, name)
+    return archive
 
 _REQ_NAME = re.compile(r"^[A-Za-z0-9._-]+")
 
@@ -171,6 +186,10 @@ def install_marker(project_root: Path, light_deps: list[str], extra: str = "") -
             h.update(rel.encode() + b"\0" + p.read_bytes() + b"\0")
     for dep in light_deps:
         h.update(dep.encode() + b"\0")
+    for name in _READER_FILES:
+        path = root / "rust" / "ffast-xyz" / name
+        if path.is_file():
+            h.update(name.encode() + b"\0" + path.read_bytes() + b"\0")
     if extra:
         h.update(b"extra\0" + extra.encode())
     return h.hexdigest()
@@ -281,6 +300,7 @@ def provision_launch_cmd(
     marker_path: str,
     marker: str,
     detectana_wheel: Optional[str] = None,
+    reader_archive: Optional[str] = None,
 ) -> str:
     """Job command that provisions the venv *then* launches the server (ADR 0028).
 
@@ -303,6 +323,8 @@ def provision_launch_cmd(
         f"([ -d {venv_path} ] || python -m venv --system-site-packages {venv_path})",
     ))
     parts.append(timed("activate", f"source {venv_path}/bin/activate"))
+    if reader_archive:
+        parts.append(timed("reader source", f"python -m zipfile -e {reader_archive} {venv_path}/ffast-xyz"))
     # uv installs the wheel in ~1.5 s where pip took 7-13 s on MeluXina
     # (ADR 0074). Copy mode: the uv cache in ~ and the venv are often on
     # different file systems, where hard links fail.
@@ -490,6 +512,12 @@ async def provision_node(
             )
         await _scp_push(profile, wheel, remote_wheel)
 
+        reader_archive = reader_source_archive(root, Path(tmp))
+        remote_reader = None
+        if reader_archive is not None:
+            remote_reader = f"{NODE_DIR}/{marker[:16]}-ffast-xyz-source.zip"
+            await _scp_push(profile, reader_archive, remote_reader)
+
         remote_detectana = None
         if detectana_root is None and pin is not None:
             # No local checkout: build the release the live extra pins, here,
@@ -523,6 +551,6 @@ async def provision_node(
         _progress("Wheel staged; venv build + install will run inside the SLURM job")
 
     cmd = provision_launch_cmd(venv, remote_wheel, light, modules, marker_path, marker,
-                               detectana_wheel=remote_detectana)
+                               detectana_wheel=remote_detectana, reader_archive=remote_reader)
     logger.info("auto-bootstrap: job will provision-and-launch: %s", cmd)
     return cmd

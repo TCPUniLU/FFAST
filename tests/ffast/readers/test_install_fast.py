@@ -16,6 +16,15 @@ from ffast.readers import install_fast as inst
 from ffast.readers.text import FAST_CONTRACT
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_uv_install_does_not_change_scientific_dependencies(monkeypatch):
+    monkeypatch.setattr(inst.shutil, "which", lambda name: "/venv/bin/uv")
+    command = inst.install_command("/server/python", "/reader.whl")
+    assert command[command.index("--python") + 1] == "/server/python"
+    assert "--no-deps" in command
+
+
 WHEELS = {
     "mac-arm": "ffast_xyz-0.1.0-cp311-abi3-macosx_11_0_arm64.whl",
     "mac-x86": "ffast_xyz-0.1.0-cp311-abi3-macosx_10_12_x86_64.whl",

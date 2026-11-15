@@ -41,6 +41,21 @@ async def _settle(lanes):
         await asyncio.gather(*list(lanes.background))
 
 
+def test_installing_a_reader_does_not_hold_up_other_messages():
+    async def scenario():
+        handler = _Handler()
+        lanes = MessageLanes(handler)
+        release = handler.hold('install')
+        await lanes.take((control.FAST_READER, [], {'action': 'install'}, 'install'))
+        await lanes.take(_other('browse'))
+        assert ('end', 'browse') in handler.log
+        assert ('end', 'install') not in handler.log
+        release.set()
+        await _settle(lanes)
+        assert ('end', 'install') in handler.log
+    asyncio.run(scenario())
+
+
 def test_a_slow_view_command_holds_up_neither_other_messages_nor_other_views():
     async def scenario():
         h = _Handler()

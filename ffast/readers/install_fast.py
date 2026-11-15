@@ -159,7 +159,7 @@ def install_command(python=sys.executable, what=None) -> list[str]:
     what = str(what or source_dir())
     uv = shutil.which("uv")
     if uv:
-        return [uv, "pip", "install", "--python", python, "--reinstall-package", "ffast-xyz", what]
+        return [uv, "pip", "install", "--python", python, "--no-deps", "--reinstall-package", "ffast-xyz", what]
     return [python, "-m", "pip", "install", "--force-reinstall", "--no-deps", what]
 
 

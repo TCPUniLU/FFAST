@@ -12,6 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # OpenViewRequest.prediction_ref) keep their existing absent-vs-null meaning.
 
 
+class FastReaderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["offer", "skip", "install", "wait"]
+
+
 class DatasetMeta(BaseModel):
     """Typed payload for the ``REMOTE_DATASET_META`` transport message.
 

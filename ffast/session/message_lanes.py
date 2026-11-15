@@ -31,7 +31,7 @@ class MessageLanes:
     async def take(self, item) -> None:
         """Start one received message ``(event, args, kwargs, msg_id)``."""
         event, _args, kwargs, _msg_id = item
-        if event in (control.REQUEST_METRIC, control.REQUEST_PLOT_VIEW):
+        if event in (control.REQUEST_METRIC, control.REQUEST_PLOT_VIEW, control.FAST_READER):
             self._start(self._handle(*item))
         elif event == control.VIEW_COMMAND and isinstance(kwargs, dict) and kwargs.get("view_id"):
             self._queue_view(kwargs["view_id"], item)

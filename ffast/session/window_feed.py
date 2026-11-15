@@ -168,6 +168,7 @@ class WindowFeed:
         datasets += list(by_name.values())
 
         return pack(control.LOADER_TYPES, [], {
+            "fast_reader_setup": True,
             "datasets": datasets,
             "writers": [{"format": f["format"], "label": f["label"], "ext": f["ext"],
                          "can_write": f["can_write"]} for f in readers.writable_formats()],
