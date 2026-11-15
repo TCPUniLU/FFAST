@@ -35,6 +35,7 @@ import { openScoreDialog } from './score_dialog.js';
 import { explainsIndex, scoredIncomplete } from './live_run.js';
 import { Rail, framesText, nameProblem } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
+import { FastReaderPrompt } from './fast_reader_prompt.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
 import { metricPanel, plotTarget, setPanelView, setPanelLabels, toFineGrid, toSaved } from './tab_edit.js';
@@ -207,8 +208,16 @@ export class FFastApp {
     // Server-side file browsing and server-side writes (ADR 0050). Ports are
     // closures so both work with whatever connection is live at call time.
     const send = (event, kwargs = {}, args = []) => this._conn?.send(event, kwargs, args);
+    this._fastReader = new FastReaderPrompt({
+      cluster: () => this._clusterProfileName && this._conn?.fastReaderSetup
+        && !this._needsControl() && this._conn?._url === this._clusterServerUrl
+        ? { connection: this._conn, name: this._clusterProfileName } : null,
+      current: (connection) => this._conn === connection,
+    });
     this._browser = new RemoteBrowser({
       send,
+      beforeLoad: (path, kind) => this._fastReader.beforeLoad(path, kind),
+      cancelBeforeLoad: () => this._fastReader.cancel(),
       getDatasets: () => this._datasets,
       getCurrentDatasetFp: () => this._currentDatasetFp,
       setStatus: (text, kind) => this._setStatus(text, kind),
@@ -1878,6 +1887,7 @@ export class FFastApp {
    * changes every time. */
   _useCluster(status) {
     this._clusterServerUrl = status.ws_url;
+    this._clusterProfileName = status.profile_name;
     document.getElementById('ws-url').value = status.ws_url;
     document.getElementById('token-input').value = status.token || '';
     this._connect({ remember: false });
@@ -1970,6 +1980,7 @@ export class FFastApp {
       conn.on(IN.DATASET_DELETED,     (kw, args) => this._onDatasetDeleted(args[0]));
       conn.on(IN.MODEL_DELETED,       (kw, args) => this._onModelDeleted(args[0]));
       conn.on(IN.LOADER_TYPES, (kw) => {
+        conn.fastReaderSetup = !!kw.fast_reader_setup;
         // The example files the guided tours load: {folder, files}, or null.
         this._examples = kw.examples ?? null;
         this._browser.setLoaderTypes(kw);

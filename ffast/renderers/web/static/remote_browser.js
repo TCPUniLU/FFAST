@@ -1341,9 +1341,22 @@ export class RemoteBrowser {
    * says why it failed. */
   _startLoad(load, event, kwargs, args) {
     this._pending = load;
-    const asked = this._ports.request(event, kwargs, args);
-    asked.then((reply) => this._loadAnswered(load, reply.kwargs),
-               (err) => this._loadFailed(load, err));
+    const start = () => {
+      const asked = this._ports.request(event, kwargs, args);
+      asked.then((reply) => this._loadAnswered(load, reply.kwargs),
+                 (err) => this._loadFailed(load, err));
+    };
+    const gate = this._ports.beforeLoad?.(load.path, load.kind);
+    if (gate?.then) {
+      gate.then((proceed) => {
+        if (this._pending !== load) return;  // disconnected or a newer load replaced it
+        if (proceed) start();
+        else {
+          this._end(load);
+          this._ports.setStatus(`Loading ${load.name} cancelled`, 'connected');
+        }
+      }, (err) => this._loadFailed(load, err));
+    } else start();
   }
 
   _loadAnswered(load, kw) {
@@ -1394,6 +1407,7 @@ export class RemoteBrowser {
 
   /** The connection ended: no announcement will finish a load now. */
   forgetLoads() {
+    this._ports.cancelBeforeLoad?.();
     this._awaiting.clear();
     this._pending = null;
   }

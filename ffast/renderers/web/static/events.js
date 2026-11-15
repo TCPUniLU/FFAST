@@ -16,6 +16,7 @@
 
 /** Client → server control messages. */
 export const OUT = Object.freeze({
+  FAST_READER: 'FAST_READER',
   LOAD_DATASET: 'LOAD_DATASET',
   LOAD_PREDICTION: 'LOAD_PREDICTION',
   LOAD_MODEL: 'LOAD_MODEL',
@@ -105,6 +106,7 @@ export const OUT = Object.freeze({
 
 /** Server → client notifications and one-shot announcements. */
 export const IN = Object.freeze({
+  FAST_READER_STATE: 'FAST_READER_STATE',
   TASK_CREATED: 'TASK_CREATED',
   TASK_PROGRESS: 'TASK_PROGRESS',
   TASK_DONE: 'TASK_DONE',

@@ -1403,6 +1403,13 @@
     }
 
     .ask-dialog .warning-modal-message { white-space: pre-line; }
+    #fast-reader-dialog .warning-modal-message { white-space: pre-line; }
+    #fast-reader-dialog [hidden] { display: none; }
+    .fast-reader-details { margin: 0 12px 12px; font-size: var(--fs-s); }
+    .fast-reader-details pre {
+      max-height: 200px; overflow: auto; white-space: pre-wrap;
+      overflow-wrap: anywhere; color: var(--ink-2);
+    }
 
     .warning-modal-check {
       display: flex;
