@@ -3,7 +3,9 @@
 [README](../README.md) · [Documentation](README.md) · [Using FFAST](usage.md)
 
 FFAST can put the whole compute half on a SLURM node while the UI stays on your
-machine. Define a profile in `config/clusters.json`:
+machine. Define a profile in `config/clusters.json`. This example enables
+automatic server setup; replace the module names with ones available on your
+cluster:
 
 ```json
 {
@@ -13,7 +15,9 @@ machine. Define a profile in `config/clusters.json`:
       "host": "login.cluster.edu",
       "username": "myuser",
       "identity_file": "~/.ssh/id_ed25519",
-      "ffast_server_cmd": "module load Python/3.11 && source ~/env/ffast_env/bin/activate && ffast-server",
+      "provision": true,
+      "modules": ["Python/3.11"],
+      "venv_path": "~/.ffast/venv",
       "partition": "gpu",
       "account": "my_account",
       "qos": "normal",
@@ -31,16 +35,37 @@ machine. Define a profile in `config/clusters.json`:
 }
 ```
 
-Key authentication only; there is no password prompt. `ffast_server_cmd` must end
-by launching `ffast-server` on the node. `snapshot_interval_minutes` controls how
-often the server checkpoints its state so a dropped connection is survivable; 0
-turns it off.
+Key authentication only; there is no password prompt.
+`snapshot_interval_minutes` controls how often the server checkpoints its state
+so a dropped connection is survivable; 0 turns it off.
 
 Connecting submits the job, waits for it to start, opens an SSH tunnel to the
 node and connects. If a job for that profile is already running you are offered
-it instead of a second one. If FFAST is not installed on the cluster, it installs
-itself: it builds a wheel locally, pushes it over SSH, creates a venv and pip
-installs, leaving a checksum marker so it only does this when something changed.
+it instead of a second one.
+
+**Automatic setup requires `provision: true`; it defaults to `false`.** With
+it enabled, FFAST builds a wheel locally and transfers it over SSH. Inside the
+SLURM job, it loads `modules`, creates a venv at `venv_path` with access to the
+modules' Python packages, and installs FFAST and its remaining dependencies.
+An install marker avoids repeating setup until the checkout or setup changes.
+The modules must provide Python 3.11, PyTorch, NumPy, SciPy, scikit-learn and
+ASE; the single Python module above is only a placeholder for your site's
+software stack. Setup runs from a local FFAST source checkout.
+
+For an environment you manage yourself, set `provision: false` (or omit it)
+and provide `ffast_server_cmd`, for example:
+
+```json
+{
+  "provision": false,
+  "ffast_server_cmd": "module load Python/3.11 && source ~/env/ffast_env/bin/activate && ffast-server"
+}
+```
+
+These are fields to add to your profile. The command must end by launching
+`ffast-server` on the node, with FFAST and its dependencies already installed.
+When `provision` is true, `ffast_server_cmd` is ignored. Automatic setup does
+not install the optional [fast .xyz reader](installation.md#the-fast-xyz-reader).
 
 Remote data is loaded by path on the cluster filesystem. For ASE files the server
 reads the first frame and lets you choose which keys are energy and forces, and

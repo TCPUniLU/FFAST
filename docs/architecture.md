@@ -78,10 +78,12 @@ It needs no native GL or GUI toolkit install, which failed on too many Linux
 setups and cannot be fixed on a shared cluster login node (ADR 0045, 0098).
 
 **`cluster/`** submits a SLURM job, waits for it, opens an SSH tunnel to the
-compute node, and connects the same protocol to it. It will also install itself
-on the cluster if it is not there: build a wheel locally, push it over SSH, make
-a venv, pip install, drop a checksum marker so it does not do it twice
-(ADR 0028). Sessions survive disconnects; the cluster dialog
+compute node, and connects the same protocol to it. A profile with
+`provision: true` also enables automatic installation: build a wheel locally,
+push it over SSH, then create a venv and install inside the SLURM job, leaving
+an install marker to avoid repeating unchanged setup. The default,
+`provision: false`, runs the profile's `ffast_server_cmd` in an existing
+environment (ADR 0028). Sessions survive disconnects; the cluster dialog
 reconnects to a still-running job rather than starting a new one (ADR 0024).
 
 ## Two things are declarative rather than coded

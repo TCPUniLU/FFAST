@@ -56,7 +56,7 @@ If using pip, replace `uv pip install` below with `python -m pip install`.
 | Task | Install |
 | --- | --- |
 | LAMMPS scoring and reference fitting | Compatible DetectAna checkout and RDKit; follow the [LAMMPS setup](lammps.md#installation) |
-| Development | `uv pip install -e ".[dev]"`; see [Contributing](../CONTRIBUTING.md) for test requirements |
+| Development and tests | `uv pip install -e ".[dev,live]"`; see [Contributing](../CONTRIBUTING.md) for the fast parser and browser test requirements |
 
 Precomputed predictions need no model-backend extra. Dependencies for optional
 inference backends are declared in [pyproject.toml](../pyproject.toml).
@@ -122,7 +122,8 @@ port used if it is occupied.
 
 ## Cluster sessions
 
-**File → Connect to Cluster…** uses an SSH/SLURM profile. Automatic setup builds
+**File → Connect to Cluster…** uses an SSH/SLURM profile. With `provision: true`
+in the profile (the default is `false`), automatic setup builds
 a wheel from your checkout, transfers it and provisions a server on a compute
 node; configured cluster modules supply scientific dependencies. The browser
 connects through an SSH tunnel and browses the server's files. You can reconnect
@@ -146,5 +147,6 @@ flowchart LR
 analysis results and requested structures.*
 
 Follow the [cluster setup reference](clusters.md) for profiles.
-Live LAMMPS scoring also needs an editable DetectAna checkout on the laptop
-before connecting; see [LAMMPS installation](lammps.md#installation).
+For live LAMMPS scoring, automatic setup ships a local editable DetectAna
+checkout when available, or fetches the release pinned by FFAST. See
+[LAMMPS installation](lammps.md#installation).

@@ -12,12 +12,20 @@ FFAST currently requires Python 3.11; see `requires-python` in `pyproject.toml`.
 git clone https://github.com/TCPUniLU/FFAST.git
 cd FFAST
 python3.11 -m venv .venv && source .venv/bin/activate
-python -m pip install -e ".[dev]"      # browser client, server, CLI and test tools
+python -m pip install -e ".[dev,live]"  # includes DetectAna and RDKit for live tests
+python -m pip install ./rust/ffast-xyz  # build the fast parser from this checkout
 python -m playwright install chromium  # browser used by the browser tests
 ```
 
 On Linux, `python -m playwright install --with-deps chromium` also installs the
 system libraries Chromium needs (this is what CI runs).
+
+Building the fast parser requires [Rust](https://rustup.rs). CI builds it from
+the checkout too, so the parser parity tests run against the current source.
+Without it, the tests that require `ffast_xyz` are skipped. See
+[the fast-reader guide](docs/installation.md#the-fast-xyz-reader) for installing
+a released wheel instead. The `live` extra is required for the live tests;
+`[dev]` alone does not install DetectAna or RDKit.
 
 Put the virtualenv somewhere that is not synced by iCloud or Dropbox. A synced
 directory can rewrite environment files while tests are running.
@@ -65,7 +73,7 @@ where useful. See the [usage guide](docs/usage.md) for the supported workflows.
 
 Before writing Python, check whether the declarative route covers you. New
 metrics, plots and whole analysis tabs can be added from a project `ffast.toml`
-with no code at all. See [docs/usage.md](docs/custom-metrics.md).
+with no code at all. See [Custom metrics and tabs](docs/custom-metrics.md).
 
 ```mermaid
 flowchart LR

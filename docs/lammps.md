@@ -44,18 +44,22 @@ With pip, replace `uv pip install` with `python -m pip install`. Real
 simulations also need your own LAMMPS build and force-field packages; the
 replay tutorial needs neither.
 
-**For automatic cluster setup**, install DetectAna editably from a local source
-checkout before connecting:
+**For automatic cluster setup**, enable `provision: true` in your
+[cluster profile](clusters.md). Bootstrap ships an editable local DetectAna
+checkout when available; otherwise it fetches the release pinned in FFAST's
+`live` extra and builds its wheel locally. To use a local checkout:
 
 ```bash
 git clone --branch v0.4.0 https://github.com/AntonCh-G/DetectAna.git ../DetectAna
 uv pip install -e ../DetectAna
 ```
 
-Bootstrap builds and transfers its wheel, installs RDKit and records the scorer environment in `~/.ffast/live.json`. Reconnect to
-provision changed dependencies. A DetectAna installation without source is
-insufficient for this bootstrap path. Manually managed servers need the live
-dependencies in their own environment.
+Bootstrap transfers the wheel, installs it and RDKit inside the SLURM job,
+and records the scorer environment in `~/.ffast/live.json`. Reconnect to
+provision changed dependencies. Fetching the pinned release requires internet
+access on the laptop; if it fails, the server starts without live scoring and
+reports why. Manually managed servers need the live dependencies in their own
+environment.
 
 ## Try the replay tutorial
 
@@ -340,7 +344,7 @@ sessions; **Live Runs** finds folders through `~/.ffast/live-runs/` pointers.
 
 | Problem | Check |
 | --- | --- |
-| Missing DetectAna or bundle API | Install a compatible checkout in the scorer environment. For bootstrap, install it editably locally, then reconnect. |
+| Missing DetectAna or bundle API | Install the live dependencies in the scorer environment. For automatic setup, check the DetectAna fetch/build message or install an editable local checkout, then reconnect with `provision: true`. |
 | Missing tutorial assets | Run from the source checkout containing `examples/lammps/`. |
 | No frames | Check the include, wrapper, accessible paths without whitespace and LAMMPS log. |
 | Scoring stalls | Compare LAMMPS progress, **Scored to** and heartbeat; read `scorer.log` and check the bundle path. |
