@@ -501,3 +501,62 @@ def test_parallel_failure_drains_reads_before_releasing_workspace(workspace, mon
         np.testing.assert_allclose(retry.values, np.abs(pred - true).mean(), rtol=1e-12)
     finally:
         executor.shutdown()
+
+
+def _wrapped(values):
+    return BatchedArray(values.shape, values.dtype, lambda a, b, v=values: v[a:b])
+
+
+def test_plan_reading_two_predictions_is_not_answered_by_one_scan(workspace):
+    from ffast.metrics.execution import ExecutionPlan, PlanStep, RawInput
+    from ffast.metrics.force_scan import ForceScans
+
+    true, pred, offsets = inputs()
+
+    def plan(first, second):
+        steps = [PlanStep(metric_id, {"reference": RawInput(_wrapped(true), "data|reference.forces"),
+                                      "predicted": RawInput(_wrapped(values), name)}, {})
+                 for metric_id, (name, values) in zip(
+                     ("ffast.force_difference", "ffast.force_parity_outliers"), (first, second))]
+        return ExecutionPlan(root_ids=["ffast.force_parity_outliers"], steps=steps)
+
+    scans = ForceScans(lambda *a, **k: None)
+    source = Source(true, pred, offsets)
+    assert scans.acquire(plan(("pred-A", pred), ("pred-B", pred + 3)), source, default_registry) is None
+    lease = scans.acquire(plan(("pred-A", pred), ("pred-A", pred)), source, default_registry)
+    assert lease is not None
+    lease.close()
+
+
+def test_two_predictions_in_one_source_each_get_their_own_value(workspace):
+    true, pred, offsets = inputs()
+    other = pred + 3.0
+    outliers = "ffast.force_parity_outliers"
+
+    class TwoPredictions(Source):
+        """Parity outliers read prediction B; every other metric reads A."""
+        asked = None
+
+        def get(self, metric_id, local_key, ref):
+            TwoPredictions.asked = metric_id
+            if ref == "prediction.forces" and metric_id == outliers:
+                return True, _wrapped(other)
+            return super().get(metric_id, local_key, ref)
+
+        def identity(self, ref):
+            if ref == "prediction.forces" and TwoPredictions.asked == outliers:
+                return "pred-B"
+            return super().identity(ref)
+
+    executor = ServerExecutor(default_registry)
+    try:
+        source = TwoPredictions(_wrapped(true), _wrapped(pred), offsets)
+        mae = executor.run(METRICS[0], source, {})
+        assert not isinstance(mae, MetricFailure), mae
+        np.testing.assert_allclose(mae.values, np.abs(pred - true).mean(), rtol=1e-12)
+        got = executor.run(outliers, source, {})
+        assert not isinstance(got, MetricFailure), got
+        want = InProcessExecutor(default_registry).run(outliers, Source(true, other, offsets), {})
+        np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values), rtol=1e-12)
+    finally:
+        executor.shutdown()

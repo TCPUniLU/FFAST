@@ -440,6 +440,7 @@ class ForceScans:
         if (not roles or f is None or not registry.has(_BASE)
                 or registry.get(_BASE)[1] is not f.force_difference):
             return None
+        pairs, first = set(), None
         for step in plan.steps:
             fn = registry.get(step.metric_id)[1]
             if fn not in (f.force_difference, f.force_parity_density, f.force_parity_outliers):
@@ -454,9 +455,15 @@ class ForceScans:
                     or reference.shape[1] != 3 or reference.dtype != np.float64
                     or predicted.dtype != np.float64):
                 return None
-            break
-        else:
+            pairs.add((r.identity, p.identity))
+            if first is None:
+                first = r, p
+        if first is None or len(pairs) > 1:
+            # A lease answers for one reference/prediction pair. A plan that
+            # mixes pairs takes the normal path, which reads each step's own inputs.
             return None
+        r, p = first
+        reference, predicted = r.value, p.value
         found, offsets = source.get(plan.root_ids[0], "_offsets", "offsets")
         if not found or offsets is None:
             found, offsets = source.get(plan.root_ids[0], "offsets", "offsets")
