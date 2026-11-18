@@ -10,6 +10,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import weakref
 from pathlib import Path
 
@@ -21,6 +22,26 @@ from ffast.io.extxyz_arrays import NotEnoughMemory
 
 _lock = threading.RLock()
 _used = 0
+_STALE_SECONDS = 3600  # same age rule as frame_cache._make_room
+
+
+def sweep_stale_temporaries(folder):
+    """Delete ``*.tmp`` files older than an hour: a crashed write left them.
+
+    Young ones stay, since another process may be writing them right now.
+    Finished and in-progress results share the name ``result-*.npy`` and a live
+    result can be old, so those are never touched here.
+    """
+    try:
+        names = list(Path(folder).glob("*.tmp"))
+    except OSError:
+        return
+    for file in names:
+        try:
+            if file.is_file() and time.time() - file.stat().st_mtime > _STALE_SECONDS:
+                file.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 class MemoryWriter:
@@ -81,6 +102,7 @@ class ResultWriter:
             )
         ).expanduser()
         folder.mkdir(parents=True, exist_ok=True)
+        sweep_stale_temporaries(folder)
         if _memory_backed(folder):
             raise NotEnoughMemory(
                 "The result directory is in RAM. Choose FFAST_RESULT_CACHE_DIR on disk."

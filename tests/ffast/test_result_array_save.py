@@ -58,3 +58,32 @@ def test_a_saved_array_gets_ordinary_file_permissions(tmp_path):
         assert path.stat().st_mode & 0o777 == 0o644
     finally:
         os.umask(umask)
+
+
+def _aged(folder, name, hours):
+    import os
+    import time
+
+    file = folder / name
+    file.write_bytes(b"x")
+    old = time.time() - hours * 3600
+    os.utime(file, (old, old))
+    return file
+
+
+def test_creating_a_result_writer_sweeps_only_old_temp_files(tmp_path, monkeypatch):
+    from ffast.io.result_array import ResultWriter
+
+    results = tmp_path / "results"
+    results.mkdir()
+    monkeypatch.setenv("FFAST_RESULT_CACHE_DIR", str(results))
+    old = _aged(results, "crashed.tmp", 2)
+    young = _aged(results, "writing-now.tmp", 0)
+    finished = _aged(results, "result-abc.npy", 2)  # same name as a live result: never swept
+    writer = ResultWriter((4, 3), np.dtype("<f8"))
+    try:
+        assert not old.exists()
+        assert young.exists()
+        assert finished.exists()
+    finally:
+        writer.abort()

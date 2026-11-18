@@ -991,6 +991,23 @@ def test_cache_keeps_every_column_when_there_is_room(tmp_path, small_budget, mon
     assert "__restore__" not in part
 
 
+def test_saving_a_batch_sweeps_only_old_temp_files(tmp_path, small_budget, monkeypatch):
+    """A crashed write leaves a .tmp file; one older than an hour is removed."""
+    import os
+    import time
+
+    path, store = _cached_store(tmp_path, small_budget, monkeypatch, 8 * 2**20)
+    old = Path(store.folder) / "crashed.tmp"
+    young = Path(store.folder) / "writing-now.tmp"
+    old.write_bytes(b"x")
+    young.write_bytes(b"x")
+    two_hours_ago = time.time() - 2 * 3600
+    os.utime(old, (two_hours_ago, two_hours_ago))
+    store._save(0, 1, {"energy:energy": np.zeros(1)})
+    assert not old.exists()
+    assert young.exists()
+
+
 def test_cache_never_evicts_files_of_an_open_dataset(tmp_path, small_budget, monkeypatch):
     """A second dataset that does not fit must not delete the batches of an open one."""
     path, store = _cached_store(tmp_path, small_budget, monkeypatch, 8 * 2**20)

@@ -587,6 +587,9 @@ class IndexedStore:
                         fcntl.flock(lock, fcntl.LOCK_EX)
                     except ImportError:
                         pass
+                    from ffast.io.result_array import sweep_stale_temporaries
+
+                    sweep_stale_temporaries(self.folder)
                     files = sorted(
                         (
                             p
