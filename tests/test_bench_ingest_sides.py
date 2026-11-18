@@ -67,3 +67,27 @@ def test_check_side_refuses_a_folder_without_ffast(tmp_path):
     env = {"PYTHONPATH": str(tmp_path)}
     with pytest.raises(SideError):
         check_side(side, env)
+
+
+@pytest.mark.parametrize("text, value", [("4G", 4 * 2**30), ("4GiB", 4 * 2**30), ("512M", 512 * 2**20),
+                                         ("1.5g", int(1.5 * 2**30)), ("1000", 1000), ("0", 0)])
+def test_memory_sizes_parse_in_binary_units(text, value):
+    from benchmarks.ingest.__main__ import parse_bytes
+
+    assert parse_bytes(text) == value
+
+
+def test_a_bad_memory_size_is_refused():
+    import argparse
+
+    from benchmarks.ingest.__main__ import parse_bytes
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_bytes("lots")
+
+
+def test_the_run_command_fixes_the_memory_budget_by_default():
+    from benchmarks.ingest.__main__ import build_parser
+
+    args = build_parser().parse_args(["run", "--side", "a=.", "--data-dir", "d", "--output", "o"])
+    assert args.memory_bytes == 3 * 2**30

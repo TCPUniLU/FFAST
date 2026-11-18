@@ -32,7 +32,7 @@ def _run(folder, name, load, errors, completed=True, error=None):
         "completed": completed, "error": error, "peak_process_tree_rss_bytes": 5000,
         "metadata": {"started_utc": "2026-11-18T10:00:00+00:00", "ram_bytes": 16,
                      "platform": "macOS-x", "python": "3.11.14 (main)",
-                     "native_parser": {"sha256": "nat"}}}))
+                     "native_parser": {"sha256": "nat"}, "ram_budget_bytes": 4096}}))
 
 
 def _folder(tmp_path, with_run_2=True):
@@ -55,6 +55,7 @@ def test_two_rows_with_the_values_of_each_run(tmp_path):
     assert (reopen["load_s"], reopen["basic_errors_s"]) == (2.5, 4.0)
     assert first["load_cores"] == 2.0 and first["basic_errors_cores"] == 1.5
     assert first["peak_rss_bytes"] == 5000 and first["native_sha256"] == "nat"
+    assert first["ram_budget_bytes"] == 4096
     assert first["cache_bytes"] == reopen["cache_bytes"] == 777
     assert first["completed"] and first["error"] is None
     assert first["host"] == "box" and first["cpu_model"] == "Fake CPU"

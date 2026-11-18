@@ -14,7 +14,7 @@ def _args(tmp_path, **over):
     base = dict(side=[f"new={run.HARNESS_ROOT}"], sizes=["100MB"], classes=["small"],
                 counts=["constant"], repeats=1, data_dir=tmp_path / "data",
                 output=tmp_path / "out", timeout=600, workers=1, delete_data_after=True,
-                target_bytes=1_500_000)
+                target_bytes=1_500_000, memory_bytes=2**30)
     return Namespace(**{**base, **over})
 
 
@@ -28,6 +28,9 @@ def test_one_side_one_repeat_gives_two_completed_rows(tmp_path, monkeypatch):
         f"read_parquet('{tmp_path}/out/rows/*.parquet') ORDER BY scenario").fetchall()
     assert [g[0] for g in got] == ["first_open", "reopen"]
     assert all(g[1] and g[2] > 0 and g[3] > 0 and g[4] > 0 for g in got)
+    budgets = duckdb.sql(f"SELECT DISTINCT ram_budget_bytes FROM "
+                         f"read_parquet('{tmp_path}/out/rows/*.parquet')").fetchall()
+    assert budgets == [(2**30,)]  # every run got the budget asked for
     assert not list((tmp_path / "data").glob("*.extxyz"))  # deleted after the case
     assert list((tmp_path / "data").glob("*.json"))        # manifest kept
 

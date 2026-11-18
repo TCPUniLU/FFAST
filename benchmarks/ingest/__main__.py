@@ -9,6 +9,20 @@ def _csv(text):
     return [part for part in text.split(",") if part]
 
 
+def parse_bytes(text):
+    """``4G``, ``512M``, ``1048576K`` or a plain number of bytes (binary units)."""
+    text = text.strip().upper().removesuffix("IB").removesuffix("B")
+    scale = {"K": 2**10, "M": 2**20, "G": 2**30}.get(text[-1:], 1)
+    number = text[:-1] if scale > 1 else text
+    try:
+        value = int(float(number) * scale)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a size: {text!r}") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("a size cannot be negative")
+    return value
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="python -m benchmarks.ingest", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -32,6 +46,12 @@ def build_parser():
     run.add_argument("--timeout", type=float, default=1800)
     run.add_argument("--workers", type=int, default=4)
     run.add_argument("--delete-data-after", action="store_true")
+    run.add_argument("--memory-bytes", type=parse_bytes, default=3 * 2**30,
+                     help="FFAST's memory budget for every run (default 3G, below the lowest "
+                          "free RAM seen on the laptop; a budget above free RAM is cut "
+                          "down and varies again). FFAST otherwise "
+                          "takes 80%% of the RAM free at start, which differs between runs and "
+                          "changes batching, cache size and load time. 0 lets FFAST choose.")
 
     cmp_ = sub.add_parser("compare", help="compare two sides of a run set")
     cmp_.add_argument("output", type=Path)

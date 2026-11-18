@@ -89,8 +89,14 @@ def run_matrix(args):
         if output.exists():
             raise SideError(f"--output {output} already exists")
         envs = {}
+        base_env = dict(os.environ)
+        memory = getattr(args, "memory_bytes", 0)
+        if memory:
+            # The same budget for every run: FFAST's own choice follows the RAM
+            # free at start, which changes its batching and cache (ADR 0105).
+            base_env["FFAST_MEMORY_BYTES"] = str(memory)
         for side in sides:
-            env, info = side_env(side, HARNESS_ROOT, dict(os.environ))
+            env, info = side_env(side, HARNESS_ROOT, base_env)
             check_side(side, env)
             if info["dirty"]:
                 print(f"warning: side {side.name!r} has uncommitted changes", flush=True)
@@ -125,6 +131,11 @@ def run_matrix(args):
                     pair = rows.rows_from_run(out_dir, facts)
                     rows.write_rows(pair, output / "rows", rows.stem_of(harness))
                     print(_line(case, side.name, repeat, pair), flush=True)
+                    budgets = {row["ram_budget_bytes"] for row in pair} - {None}
+                    if memory and any(b < memory for b in budgets):
+                        print(f"  warning: FFAST's memory budget was {min(budgets) / 2**30:.2f} GiB, "
+                              f"below the {memory / 2**30:.2f} GiB asked for: too little free RAM",
+                              flush=True)
                     order_index += 1
             if args.delete_data_after:
                 path.unlink(missing_ok=True)

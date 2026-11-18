@@ -75,6 +75,12 @@ def build_report(output, baseline, candidate, extra=()):
         for side in sides}
     commits = {side: con.execute(
         "SELECT DISTINCT commit, dirty FROM r WHERE side = ?", [side]).fetchall() for side in sides}
+    columns = {row[0] for row in con.execute("DESCRIBE r").fetchall()}
+    budgets = {side: [] for side in sides}
+    if "ram_budget_bytes" in columns:  # rows written before 2026-11-18 lack it
+        budgets = {side: [b for (b,) in con.execute(
+            "SELECT DISTINCT ram_budget_bytes FROM r WHERE side = ? AND ram_budget_bytes "
+            "IS NOT NULL ORDER BY 1", [side]).fetchall()] for side in sides}
 
     measure_list = ", ".join(m for m, _, _ in MEASURES)
     rows = con.execute(f"""
@@ -101,6 +107,10 @@ def build_report(output, baseline, candidate, extra=()):
         runs, failed = counts[side]
         shown = ", ".join(f"{(c or '?')[:10]}{' (dirty)' if d else ''}" for c, d in commits[side])
         lines.append(f"- **{side}**: commit {shown}; {runs} runs, {failed} failed scenario rows left out.")
+        if budgets[side]:
+            shown = ", ".join(f"{b / 2**30:.2f}" for b in budgets[side])
+            note = "" if len(budgets[side]) == 1 else " (differs between runs: results may split in two)"
+            lines.append(f"  FFAST memory budget (GiB): {shown}{note}.")
     lines += ["", "Baseline is the left column. Cells are median [25th–75th percentile].",
               "Verdict: *worse* needs a ratio above 1.10 and the candidate's 25th percentile above the",
               "baseline's 75th; *better* is the mirror image; anything else is *no clear change*.",
