@@ -195,10 +195,12 @@ class ServerExecutor(MetricExecutor):
             token = stop.running_under(stopped)
             try:
                 from ffast.io.budget import budget
+                # Reserve what these inputs need. A schema's memory_mb hint
+                # is a fixed guess for large jobs; the gate above already
+                # uses it to make heavy steps take turns. Reserving it here
+                # refused small inputs whenever the budget was below it.
                 arrays = [v.nbytes for v in kwargs.values() if isinstance(v, np.ndarray)]
                 working = max(1024, 2 * sum(arrays))
-                if schema.hints.memory_mb is not None:
-                    working = max(working, schema.hints.memory_mb * _MIB)
                 with budget().reserve(working):
                     if outside:
                         return self._workers()._ship_to_worker(

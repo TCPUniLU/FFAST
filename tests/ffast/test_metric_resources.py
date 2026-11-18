@@ -225,3 +225,24 @@ def test_no_limit_or_no_cgroup_is_none(tmp_path):
     proc, root = _tree(tmp_path, "0::/\n", {"memory.max": "max", "memory.current": "1"})
     assert resources.cgroup_headroom(proc, root) is None
     assert resources.cgroup_headroom(str(tmp_path / "absent"), root) is None
+
+
+def test_a_memory_hint_larger_than_the_ram_budget_does_not_refuse_small_inputs(monkeypatch):
+    """The hint schedules heavy steps; it is not a reservation.
+
+    Force parity density and outliers declare memory_mb=4096. With less than
+    4 GiB of shared budget (a laptop with little free RAM), reserving the hint
+    refused these metrics on a 100-frame example dataset.
+    """
+    from ffast.io import budget as shared
+    from ffast.metrics.models import MetricResult
+
+    monkeypatch.setattr(shared, "_budget", shared.Budget(
+        ram_bytes=64 * 2**20, parsed_bytes=0, result_bytes=0))
+    reg = MetricRegistry()
+    reg.metric(id="t.quick", inputs={"x": "ref.x"}, shape="scalar", unit="energy",
+               hints={"memory_mb": 4096})(lambda x: float(np.sum(x)))
+    ex = ServerExecutor(reg, outside=lambda fn: False)
+    result = ex.run("t.quick", FlatInputSource({"x": np.ones(1000)}), {})
+    assert isinstance(result, MetricResult), result
+    assert result.values == 1000.0
