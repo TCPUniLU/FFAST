@@ -11,6 +11,7 @@ import contextvars
 import hashlib
 import json
 import logging
+import mmap
 import os
 import shutil
 import struct
@@ -88,6 +89,54 @@ def _restore(part, restore=None):
 def file_state(path):
     s = os.stat(path)
     return s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns
+
+
+def _read_mapped(f, offset, nbytes, out):
+    """Copy ``nbytes`` of the file at ``offset`` into the writable uint8 array
+    ``out``, through a page-aligned map that is closed before returning. The
+    operating system is asked to fetch the range ahead where it can be."""
+    if nbytes == 0:
+        return
+    aligned = offset - offset % mmap.ALLOCATIONGRANULARITY
+    delta = offset - aligned
+    with mmap.mmap(f.fileno(), delta + nbytes, offset=aligned, access=mmap.ACCESS_READ) as window:
+        advise = getattr(window, "madvise", None)
+        will_need = getattr(mmap, "MADV_WILLNEED", None)
+        if advise is not None and will_need is not None:
+            try:
+                advise(will_need)
+            except OSError:
+                pass
+        view = np.frombuffer(window, dtype=np.uint8, count=nbytes, offset=delta)
+        out[:] = view
+        del view                       # the map cannot close while a view exists
+
+
+def _member_rows(archive, f, key, start, stop):
+    """Rows ``[start, stop)`` (all rows if ``stop`` is None) of the stored
+    ``key.npy`` member of an open npz archive, copied into a new array; None
+    when the member is compressed or in a layout that cannot be read in place."""
+    member = archive.getinfo(key + ".npy")
+    if member.compress_type != zipfile.ZIP_STORED:
+        return None
+    f.seek(member.header_offset)
+    header = f.read(30)
+    if len(header) != 30 or header[:4] != b"PK\x03\x04":
+        return None
+    name_len, extra_len = struct.unpack_from("<HH", header, 26)
+    f.seek(name_len + extra_len, os.SEEK_CUR)
+    version = np.lib.format.read_magic(f)
+    reader = (np.lib.format.read_array_header_1_0 if version == (1, 0)
+              else np.lib.format.read_array_header_2_0)
+    shape, fortran, dtype = reader(f)
+    stop = shape[0] if stop is None else stop
+    if fortran or dtype.hasobject or start < 0 or stop > shape[0]:
+        return None
+    width = int(np.prod(shape[1:])) * dtype.itemsize
+    out = np.empty((stop - start, *shape[1:]), dtype=dtype)
+    _read_mapped(f, f.tell() + start * width, (stop - start) * width,
+                 out.reshape(-1).view(np.uint8))
+    return out
 
 
 class NoManifest(Exception):
@@ -496,16 +545,17 @@ class IndexedStore:
         """Read only the requested rows of an uncompressed numpy zip member.
 
         np.savez uses ZIP_STORED. Its members are ordinary .npy files; seek
-        past the ZIP and numpy headers, then read the selected contiguous
-        bytes. No mapping and no whole-batch extraction on a random read.
+        past the ZIP and numpy headers, then map just the selected bytes for
+        a moment and copy them out (ADR 0106). The copy is a normal array: no
+        view of the map outlives this call, and the map is never kept open.
         """
         if not self.use_cache:
             return None
         path = self._cache_path(a, b)
         try:
-            with zipfile.ZipFile(path) as archive:
+            with zipfile.ZipFile(path) as archive, open(path, "rb") as f:
                 try:
-                    member = archive.getinfo(key + ".npy")
+                    archive.getinfo(key + ".npy")
                 except KeyError:
                     if "__omitted__.npy" in archive.namelist():
                         with archive.open("__omitted__.npy") as member:
@@ -517,35 +567,9 @@ class IndexedStore:
                         np.nan,
                         dtype=info["dtype"],
                     )
-                if member.compress_type != zipfile.ZIP_STORED:
+                out = _member_rows(archive, f, key, start, stop)
+                if out is None:
                     return None
-                with open(path, "rb") as f:
-                    f.seek(member.header_offset)
-                    header = f.read(30)
-                    if len(header) != 30 or header[:4] != b"PK\x03\x04":
-                        return None
-                    name_len, extra_len = struct.unpack_from("<HH", header, 26)
-                    f.seek(name_len + extra_len, os.SEEK_CUR)
-                    version = np.lib.format.read_magic(f)
-                    reader = (
-                        np.lib.format.read_array_header_1_0
-                        if version == (1, 0)
-                        else np.lib.format.read_array_header_2_0
-                    )
-                    shape, fortran, dtype = reader(f)
-                    if (
-                        fortran
-                        or dtype.hasobject
-                        or start < 0
-                        or stop > shape[0]
-                    ):
-                        return None
-                    width = int(np.prod(shape[1:])) * dtype.itemsize
-                    f.seek(start * width, os.SEEK_CUR)
-                    data = f.read((stop - start) * width)
-                    out = np.frombuffer(data, dtype=dtype).reshape(
-                        stop - start, *shape[1:]
-                    )
                 if "__restore__.npy" in archive.namelist():
                     with archive.open("__restore__.npy") as member:
                         table = np.lib.format.read_array(member, allow_pickle=False)
@@ -554,6 +578,30 @@ class IndexedStore:
             return out
         except (OSError, ValueError, EOFError, zipfile.BadZipFile):
             return None
+
+    def _cached_batch(self, a, b):
+        """Every column of one cached window, each read through a short-lived
+        map. None when the window omits a column; raises when the file is
+        missing or damaged."""
+        path = self._cache_path(a, b)
+        with zipfile.ZipFile(path) as archive, open(path, "rb") as f:
+            names = archive.namelist()
+            if "__omitted__.npy" in names:
+                return None
+            part = {}
+            for name in names:
+                if name == "__restore__.npy":
+                    continue
+                value = _member_rows(archive, f, name[:-4], 0, None)
+                if value is None:
+                    raise ValueError("A cached column cannot be read in place")
+                part[name[:-4]] = value
+            if "__restore__.npy" in names:
+                with archive.open("__restore__.npy") as member:
+                    table = np.lib.format.read_array(member, allow_pickle=False)
+                _restore(part, table)
+        os.utime(path)
+        return part
 
     def _save(self, a, b, part):
         if not self.use_cache or not budget().parsed_limit:
@@ -676,12 +724,12 @@ class IndexedStore:
         part = None
         if self.use_cache:
             try:
-                with np.load(
-                    self._cache_path(a, b), allow_pickle=False
-                ) as saved:
-                    if "__omitted__" not in saved.files:
-                        part = _restore({k: saved[k] for k in saved.files})
-                os.utime(self._cache_path(a, b))
+                part = self._cached_batch(a, b)
+                if part is not None:
+                    # Read through the operating system's file cache, which it
+                    # drops first when memory is short: not kept in the RAM
+                    # cache (ADR 0106).
+                    return part
             except (OSError, ValueError, EOFError, zipfile.BadZipFile):
                 # A damaged or cut-off batch: parse the source instead, and
                 # drop the file so it is not hit again (_save rewrites it).

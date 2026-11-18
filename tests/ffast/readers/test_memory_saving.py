@@ -1236,3 +1236,125 @@ def test_a_column_left_out_of_a_one_pass_cache_is_read_from_the_source(
     expected = dataset(path)
     np.testing.assert_array_equal(
         np.asarray(store.column("positions")[:]), np.asarray(expected.R_flat))
+
+
+# ── cached batches are read through short-lived memory maps (ADR 0106) ──────
+
+
+@pytest.fixture
+def maps(monkeypatch):
+    """Every map the cache reader opens, to check that each one was closed."""
+    import mmap as mmap_module
+
+    from ffast.readers import indexed
+
+    opened = []
+    real = mmap_module.mmap
+
+    def tracking(*args, **kwargs):
+        window = real(*args, **kwargs)
+        opened.append(window)
+        return window
+
+    monkeypatch.setattr(indexed.mmap, "mmap", tracking)
+    return opened
+
+
+def _all_columns(store):
+    return {key: np.asarray(store.column(key)[:]) for key in store.info}
+
+
+def test_mapped_reads_equal_the_source_values_across_batches(
+    tmp_path, small_budget, monkeypatch, maps
+):
+    path = write_xyz(tmp_path / "mapped.xyz", n=3000)
+    _, store = _scan_store(tmp_path, small_budget, monkeypatch, 64 * 2**20, path)
+    expected = dataset(path)
+    _forbid_parsing(monkeypatch, store)       # every read is a cache read
+    got = _all_columns(store)
+    np.testing.assert_array_equal(got["positions"], np.asarray(expected.R_flat))
+    np.testing.assert_array_equal(got["forces:forces"], np.asarray(expected.F_flat))
+    np.testing.assert_array_equal(got["energy:energy"], np.asarray(expected.E))
+    assert got["numbers"].dtype == expected.arrays["numbers"].dtype    # uint8 on disk, restored
+    np.testing.assert_array_equal(got["numbers"], expected.arrays["numbers"])
+    # Single rows and a stretch that crosses a batch boundary.
+    boundary = store.ranges[0][1]
+    for frame in (0, boundary - 1, boundary, 2999):
+        np.testing.assert_array_equal(store.column("energy:energy")[frame:frame + 1],
+                                      expected.E[frame:frame + 1])
+        np.testing.assert_array_equal(
+            store.column("positions")[frame * 40:(frame + 1) * 40], expected.getCoordinates(frame))
+    np.testing.assert_array_equal(
+        store.column("forces:forces")[(boundary - 2) * 40:(boundary + 2) * 40],
+        np.asarray(expected.F_flat)[(boundary - 2) * 40:(boundary + 2) * 40])
+    assert maps and all(window.closed for window in maps)
+
+
+def test_mapped_reads_with_omitted_columns_equal_the_source(
+    tmp_path, small_budget, monkeypatch, maps
+):
+    path = write_xyz(tmp_path / "omitted.xyz", n=3000)
+    size = Path(path).stat().st_size
+    _, store = _scan_store(tmp_path, small_budget, monkeypatch, int(size * 1.0), path)
+    assert all("positions" not in names for names in _batch_names(store))
+    expected = dataset(path)
+    got = _all_columns(store)                # positions come from the source
+    np.testing.assert_array_equal(got["positions"], np.asarray(expected.R_flat))
+    np.testing.assert_array_equal(got["forces:forces"], np.asarray(expected.F_flat))
+    assert all(window.closed for window in maps)
+
+
+def test_reading_a_whole_dataset_from_disk_leaves_the_ram_cache_empty(
+    tmp_path, small_budget, monkeypatch, maps
+):
+    path = write_xyz(tmp_path / "ram.xyz", n=3000)
+    _, store = _scan_store(tmp_path, small_budget, monkeypatch, 64 * 2**20, path)
+    _all_columns(store)
+    for a, b in store.ranges:                # a whole window, as a metric reads it
+        store._part(a, b)
+    assert small_budget.cache_bytes == 0 and not small_budget.cache
+
+
+def test_a_window_parsed_from_the_source_is_still_kept_in_ram(
+    tmp_path, small_budget, monkeypatch
+):
+    path = write_xyz(tmp_path / "source.xyz", n=3000)
+    size = Path(path).stat().st_size
+    _, store = _scan_store(tmp_path, small_budget, monkeypatch, int(size * 1.0), path)
+    a, b = store.ranges[0]
+    store._part(a, b)                        # positions are not on disk: a source parse
+    assert small_budget.cached((store.identity, a, b)) is not None
+
+
+def test_a_batch_deleted_after_a_read_falls_back_to_the_source(
+    tmp_path, small_budget, monkeypatch, maps
+):
+    path = write_xyz(tmp_path / "deleted.xyz", n=3000)
+    _, store = _scan_store(tmp_path, small_budget, monkeypatch, 64 * 2**20, path)
+    expected = dataset(path)
+    first = np.asarray(store.column("positions")[:])
+    for a, b in store.ranges:
+        store._cache_path(a, b).unlink()
+    small_budget.cache.clear()
+    small_budget.cache_bytes = 0
+    again = np.asarray(store.column("positions")[:])
+    np.testing.assert_array_equal(first, again)
+    np.testing.assert_array_equal(again, np.asarray(expected.R_flat))
+
+
+def test_no_map_or_file_stays_open_after_cache_reads(
+    tmp_path, small_budget, monkeypatch, maps
+):
+    import warnings
+
+    path = write_xyz(tmp_path / "leaks.xyz", n=3000)
+    _, store = _scan_store(tmp_path, small_budget, monkeypatch, 64 * 2**20, path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ResourceWarning)
+        _all_columns(store)
+        for a, b in store.ranges:
+            store._part(a, b)
+        gc.collect()
+    assert maps and all(window.closed for window in maps)
+    for a, b in store.ranges:                # nothing holds a batch file
+        store._cache_path(a, b).unlink()
