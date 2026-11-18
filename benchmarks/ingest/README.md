@@ -64,6 +64,17 @@ about 67 GB, and one case's caches need roughly the file size again. Use
 disk is small. Generation refuses to start with less than 1.2 × the file size free.
 Making a 100 MB file takes about a second with 4 workers.
 
+## Memory budget
+
+Every run gets the same FFAST memory budget, `--memory-bytes` (default 3G), set
+through `FFAST_MEMORY_BYTES`. Without it FFAST takes 80 % of the RAM free at
+start. On 2026-11-18 that was 3.3–5.1 GiB from run to run on one 10 GB file, and
+FFAST then split the file into 58–75 batches: the cache was 4.7 or 7.0 GB and
+first-open loading 15 or 19 s, on identical code. FFAST never takes more than the
+RAM that is free, so a budget above it is cut down and varies again: `run` warns
+when that happens, and `compare` lists the budgets each side got.
+`--memory-bytes 0` lets FFAST choose, to time its default behaviour.
+
 ## Caveats
 
 - The OS file cache is warm and not controlled. "First open" means empty FFAST

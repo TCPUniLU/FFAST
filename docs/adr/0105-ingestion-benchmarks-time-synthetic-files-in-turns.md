@@ -64,6 +64,13 @@ A run calls the existing profiler as a subprocess,
 The OS file cache is warm and not controlled. Results say so. A "first open"
 is never called a cold disk read (spec §7.5).
 
+Every run gets the same memory budget (`--memory-bytes`, default 3 GiB, through
+`FFAST_MEMORY_BYTES`). Added 2026-11-18 after a same-code check on a 10 GB file:
+FFAST's own budget is 80 % of the RAM free at start, which ranged 3.3–5.1 GiB
+between runs, and it changed the batching (58–75 batches), the cache (4.7 or
+7.0 GB) and first-open loading (15 or 19 s). The budget each run really got is
+recorded, because FFAST cuts a budget above the free RAM.
+
 Recorded per run: wall seconds and average CPU cores for loading and for
 Basic Errors, peak process-tree memory, cache bytes on disk, success or
 error, and the native parser's checksum.
