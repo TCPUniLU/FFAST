@@ -144,6 +144,7 @@ things came up.
 - [0104](0104-related-force-metrics-share-batched-passes.md) Related force metrics share a summary pass and parity-binning pass, with bounded result storage and cancellation shared across consumers (accepted, built)
 - [0105](0105-ingestion-benchmarks-time-synthetic-files-in-turns.md) Ingestion benchmarks time seeded synthetic files in turns: `benchmarks/ingest/` generates 18 extxyz files (3 sizes × 3 atom classes × constant/variable), runs the profiler on two checkouts in alternating order, stores one Parquet row per run for DuckDB, and gives median, spread and a worse/better/no-clear-change verdict (accepted, built)
 - [0106](0106-the-ram-budget-stops-shaping-the-parsed-cache.md) The RAM budget stops shaping the parsed cache: one one-pass path for full memory-saving XYZ loads, cache columns chosen by file size and disk, plain reads of cached batches through the OS file cache (memory maps measured 2.6x slower), automatic budget from total RAM (accepted, built)
+- [0107](0107-fingerprints-hash-fixed-chunks-and-scans-resume.md) Fingerprints hash fixed chunks of 16,384 rows with SHA-256, a full scan names its cache when it starts, and an interrupted scan resumes from its last committed window (accepted, built)
 
 ## Format
 
