@@ -14,6 +14,7 @@
 | [Example datasets](../examples/data/README.md) | Sources, permissions, predictions and units |
 | [LAMMPS examples](../examples/lammps/README.md) | Replay assets and tutorial data |
 | [Troubleshooting](troubleshooting.md) | Browser connection flowchart, installation, and data problems |
+| [Performance profiling](performance-profiling.md) | Repeatable full-file loading and Basic Errors profiles, resource samples and cache comparisons |
 
 For development, start with [Contributing](../CONTRIBUTING.md), the
 [architecture](architecture.md), [domain vocabulary](../CONTEXT.md),

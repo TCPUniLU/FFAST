@@ -537,9 +537,11 @@ fn read_exact_at(file: &std::fs::File, buf: &mut [u8], off: u64) -> std::io::Res
 /// file: on Lustre (MeluXina) threads faulting in pages of a mapped cold file
 /// waited for each small piece in turn, about 12× slower (2026-11-14).
 fn read_runs(file: &std::fs::File, runs: &[(u64, u64)], threads: usize) -> std::io::Result<Vec<u8>> {
+    let mut clock = tick();
     const PIECE: u64 = 8 << 20;
     let total: u64 = runs.iter().map(|&(a, b)| b - a).sum();
     let mut buf = vec![0u8; total as usize];
+    tock("read_runs.allocate", &mut clock);
     let mut jobs: Vec<(u64, &mut [u8])> = Vec::new();
     let mut rest: &mut [u8] = &mut buf;
     for &(a, b) in runs {
@@ -553,12 +555,14 @@ fn read_runs(file: &std::fs::File, runs: &[(u64, u64)], threads: usize) -> std::
         }
     }
     let work = |(off, part): (u64, &mut [u8])| read_exact_at(file, part, off);
+    tock("read_runs.prepare", &mut clock);
     if threads > 1 && jobs.len() > 1 {
         let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(std::io::Error::other)?;
         pool.install(|| jobs.into_par_iter().try_for_each(work))?;
     } else {
         jobs.into_iter().try_for_each(work)?;
     }
+    tock("read_runs.pread", &mut clock);
     Ok(buf)
 }
 
@@ -710,11 +714,13 @@ fn strip(t: &[u8]) -> &[u8] {
 }
 
 fn parse_chunk(ctx: &Ctx, chunk: Chunk) -> Result<Part, String> {
+    let mut clock = tick();
     let Chunk { a, b, atom0, numbers, pos, mut cell, mut cols } = chunk;
     // Each chunk reads its own frames: while one thread waits for the file,
     // the others parse.
     let (runs, at) = frame_runs(&ctx.starts[a..b], &ctx.ends[a..b]);
     let data = read_runs(ctx.file, &runs, 1).map_err(|e| format!("could not read the file ({e}); it changed"))?;
+    tock("parse_chunk.read", &mut clock);
     let mut part = Part { seen: vec![false; ctx.targets.len()], ..Default::default() };
     let mut layouts: Vec<Layout> = Vec::new();
     let mut index: HashMap<Vec<u8>, usize> = HashMap::new(); // Properties -> layout
@@ -888,6 +894,7 @@ fn parse_chunk(ctx: &Ctx, chunk: Chunk) -> Result<Part, String> {
             return Err(format!("frame {frame} has more lines than its atom count"));
         }
     }
+    tock("parse_chunk.decode", &mut clock);
     part.extras = extras;
     Ok(part)
 }
@@ -1157,8 +1164,12 @@ fn read_and_index(file: &std::fs::File, start: u64, end: u64, threads: usize)
     let mut buf = vec![0u8; (end - start) as usize];
     let jobs: Vec<(usize, &mut [u8])> = buf.chunks_mut(PIECE).enumerate().map(|(i, p)| (i * PIECE, p)).collect();
     let work = |(at, piece): (usize, &mut [u8])| -> std::io::Result<Vec<usize>> {
+        let mut clock = tick();
         read_exact_at(file, piece, start + at as u64)?;
-        Ok(newlines_in(piece, at))
+        tock("find_chunk.pread", &mut clock);
+        let nl = newlines_in(piece, at);
+        tock("find_chunk.newlines", &mut clock);
+        Ok(nl)
     };
     let parts: Vec<Vec<usize>> = if threads > 1 && jobs.len() > 1 {
         let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(std::io::Error::other)?;

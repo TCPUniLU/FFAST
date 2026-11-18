@@ -43,6 +43,10 @@ read the file from the end, or send it with the bug report. Large data is
 shortened to its size, so the file stays small. `ffast-server --trace DIR`
 writes to `DIR` instead.
 
+For slow large-file loading or metric computation, use the opt-in
+[performance profiler](performance-profiling.md) to record loading phases,
+CPU/RAM samples and first-versus-repeated Basic Errors requests.
+
 The page is served on port 8764, so the browser remembers its layout (open
 settings section, sidebar width, recent servers) from one launch to the next;
 the browser keeps these per address, port included. If 8764 is taken, for
