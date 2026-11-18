@@ -143,6 +143,7 @@ things came up.
 - [0103](0103-large-xyz-files-are-indexed-beside-parsing.md) Large XYZ files are indexed beside parsing; parallel hashing, retained scalar columns and stable cache partitions remove repeated work within the existing resource limits (accepted, built)
 - [0104](0104-related-force-metrics-share-batched-passes.md) Related force metrics share a summary pass and parity-binning pass, with bounded result storage and cancellation shared across consumers (accepted, built)
 - [0105](0105-ingestion-benchmarks-time-synthetic-files-in-turns.md) Ingestion benchmarks time seeded synthetic files in turns: `benchmarks/ingest/` generates 18 extxyz files (3 sizes × 3 atom classes × constant/variable), runs the profiler on two checkouts in alternating order, stores one Parquet row per run for DuckDB, and gives median, spread and a worse/better/no-clear-change verdict (accepted, built)
+- [0106](0106-the-ram-budget-stops-shaping-the-parsed-cache.md) The RAM budget stops shaping the parsed cache: one one-pass path for full memory-saving XYZ loads, cache columns chosen by file size and disk, plain reads of cached batches through the OS file cache (memory maps measured 2.6x slower), automatic budget from total RAM (accepted, built)
 
 ## Format
 
