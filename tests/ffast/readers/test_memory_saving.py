@@ -1143,3 +1143,96 @@ def test_a_full_array_load_refused_for_memory_starts_again_in_saving_mode(
     ds = dataset(write_xyz(tmp_path / "late.xyz", n=300))
     assert ds.memory_mode == "saving"
     assert scan_spy == ["one-pass"]
+
+
+# ── cache levels of a one-pass scan follow the projected file size (ADR 0106) ─
+
+
+def _scan_store(tmp_path, small_budget, monkeypatch, parsed_limit, path):
+    """A one-pass scan with 1 MiB windows, so a few thousand frames make several."""
+    from ffast.io import frame_cache, frame_index
+    from ffast.readers import text
+
+    if not text.fast_parser_usable():
+        pytest.skip("Optional fast parser unavailable")
+    small_budget.limit = 16 * 2**20
+    small_budget.parsed_limit = parsed_limit
+    monkeypatch.setattr(frame_cache, "CACHE_DIR", tmp_path / "parsed")
+    monkeypatch.setattr(frame_index, "CACHE_DIR", tmp_path / "index")
+    loaded = chunks.read_arrays(XyzReader, path, memory_mode="saving", workers=1)
+    small_budget.cache.clear()
+    small_budget.cache_bytes = 0
+    store = loaded.arrays.store
+    assert len(store.ranges) > 2
+    return loaded, store
+
+
+def _batch_names(store):
+    import zipfile
+
+    out = []
+    for a, b in store.ranges:
+        with zipfile.ZipFile(store._cache_path(a, b)) as archive:
+            out.append({n[:-4] for n in archive.namelist()})
+    return out
+
+
+def test_a_one_pass_scan_with_room_keeps_positions_in_every_batch(
+    tmp_path, small_budget, monkeypatch
+):
+    path = write_xyz(tmp_path / "room.xyz", n=3000)
+    _, store = _scan_store(tmp_path, small_budget, monkeypatch, 64 * 2**20, path)
+    for names in _batch_names(store):
+        assert {"numbers", "positions", "forces:forces"} <= names
+        assert "__omitted__" not in names
+
+
+def test_a_one_pass_scan_between_two_levels_keeps_forces_but_not_positions(
+    tmp_path, small_budget, monkeypatch
+):
+    path = write_xyz(tmp_path / "between.xyz", n=3000)
+    size = Path(path).stat().st_size
+    # The whole cache at level 3 is about 1.6x the file, level 2 about 0.6x.
+    _, store = _scan_store(tmp_path, small_budget, monkeypatch, int(size * 1.0), path)
+    for names in _batch_names(store):
+        assert {"numbers", "forces:forces", "energy:energy"} <= names
+        assert "positions" not in names and "__omitted__" in names
+
+
+def _padded_xyz(path, parts):
+    """``parts`` is (frames, padding bytes in the comment line) per stretch of
+    the file: a long comment makes the file bigger for the same parsed data."""
+    atoms = 40
+    with open(path, "w") as f:
+        i = 0
+        for frames, pad in parts:
+            for _ in range(frames):
+                f.write(f"{atoms}\nProperties=species:S:1:pos:R:3:forces:R:3 energy={i} "
+                        f"note={'x' * max(1, pad)}\n")
+                for j in range(atoms):
+                    f.write(f"C {i}.125 {j}.25 -1.5 0.1 0.2 0.3\n")
+                i += 1
+    return str(path)
+
+
+def test_a_projection_that_grows_mid_scan_drops_a_level_and_never_adds_it_back(
+    tmp_path, small_budget, monkeypatch
+):
+    # Stretch 1 has little parsed data per byte of text; stretch 2 has more,
+    # so the projected cache grows past the allowance; stretch 3 is like 1.
+    path = _padded_xyz(tmp_path / "grows.xyz", [(1000, 1500), (1000, 0), (1000, 1500)])
+    _, store = _scan_store(tmp_path, small_budget, monkeypatch, 6 * 2**20, path)
+    kept = ["positions" in names for names in _batch_names(store)]
+    assert kept[0] and not kept[-1]
+    assert kept == sorted(kept, reverse=True)       # True ... True False ... False
+
+
+def test_a_column_left_out_of_a_one_pass_cache_is_read_from_the_source(
+    tmp_path, small_budget, monkeypatch
+):
+    path = write_xyz(tmp_path / "left-out.xyz", n=3000)
+    size = Path(path).stat().st_size
+    loaded, store = _scan_store(tmp_path, small_budget, monkeypatch, int(size * 1.0), path)
+    expected = dataset(path)
+    np.testing.assert_array_equal(
+        np.asarray(store.column("positions")[:]), np.asarray(expected.R_flat))

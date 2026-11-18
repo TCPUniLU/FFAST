@@ -216,7 +216,11 @@ class IndexedStore:
         self.identity += "-" + uuid.uuid4().hex
         temporary_identity = self.identity
         self.ranges = []
-        self._prefer_metrics = True
+        # A scan projects the cache size from bytes (ADR 0106). The disk
+        # allowance is read at the first save, and the kept level only falls.
+        self._scanning = True
+        self._scan_allowance = None
+        self._kept_level = None
         pending = None
         try:
             with ThreadPoolExecutor(max_workers=min(4, text.fast_threads())) as hashes, \
@@ -558,27 +562,46 @@ class IndexedStore:
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
             size = sum(v.nbytes for v in part.values()) + 4096 * len(part)
-            limit = min(
-                budget().parsed_limit, shutil.disk_usage(self.folder).free // 4
-            )
+            scanning = getattr(self, "_scanning", False) and a >= 0
+            if scanning:
+                # Read the allowance once: the scan fills the disk itself, and
+                # a later window must not decide differently because of that.
+                if self._scan_allowance is None:
+                    self._scan_allowance = min(
+                        budget().parsed_limit, shutil.disk_usage(self.folder).free // 4
+                    )
+                limit = self._scan_allowance
+            else:
+                limit = min(
+                    budget().parsed_limit, shutil.disk_usage(self.folder).free // 4
+                )
             if a >= 0:
                 part = _compact(part)
                 levels = _cache_levels(part)
                 # Keep whole priority levels while the projected dataset
                 # total fits: (1) per-frame values and species, (2) forces,
-                # (3) positions and other atom columns. Windowed scans do not
-                # know the final frame count, so they never keep level 3.
-                # Level 1 is kept even if nothing else fits. Omitted columns
-                # are read from the original file, never filled with NaN.
-                scale = len(self.counts) / max(1, b - a)
-                top = 2 if getattr(self, "_prefer_metrics", False) else 3
+                # (3) positions and other atom columns. Level 1 is kept even
+                # if nothing else fits. Omitted columns are read from the
+                # original file, never filled with NaN.
+                if scanning:
+                    # The frame count is not known yet: scale by bytes of the
+                    # file, from this window's text to the whole file.
+                    window = max(1, int(self.ends[b - 1] - self.starts[a]))
+                    scale = self.state[2] / window
+                else:
+                    scale = len(self.counts) / max(1, b - a)
                 keep = 1
-                for level in range(2, top + 1):
+                for level in range(2, 4):
                     wanted = [k for k in part if levels[k] <= level]
                     projected = (sum(part[k].nbytes for k in wanted) + 4096 * len(wanted)) * scale
                     if projected > limit:
                         break
                     keep = level
+                if scanning:
+                    # The choice may fall in a later window, never rise.
+                    if self._kept_level is not None:
+                        keep = min(keep, self._kept_level)
+                    self._kept_level = keep
                 selected = {k: v for k, v in part.items() if levels[k] <= keep}
                 if len(selected) < len(part):
                     selected["__omitted__"] = np.asarray(sorted(set(part) - set(selected)))
