@@ -279,6 +279,7 @@ def test_a_session_saves_the_kept_frames_and_restores_them_without_sampling_agai
     loader = SessionPersistence.__new__(SessionPersistence)
     loader._env = SimpleNamespace(
         datasetTypes={}, datasets=SimpleNamespace(get=lambda fp: None),
+        getDatasetFromPath=lambda path: None,
         loadDataset=lambda *a, **k: calls.append((a, k)), lookForGhosts=lambda: None)
     loader.loadInfo = lambda info: None
     monkeypatch.setattr(SessionPersistence, "load_cache", lambda *a, **k: None, raising=False)

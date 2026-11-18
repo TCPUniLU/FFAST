@@ -54,7 +54,7 @@ class MACEModelLoader(ModelLoaderACE):
 
     def getFingerprint(self):
         import torch
-        from ffast.cache.fingerprint import md5FromArraysAndStrings
+        from ffast.cache.fingerprint import fingerprintFromArraysAndStrings
 
         # NOTE: This is *terrible* practice but the only way I have found
         # to make this workable on CPU. Unfortunately this will have to do.
@@ -74,7 +74,7 @@ class MACEModelLoader(ModelLoaderACE):
             for param in child.parameters():
                 lst.append(param.detach().cpu().numpy())
 
-        fp = md5FromArraysAndStrings(*lst)
+        fp = fingerprintFromArraysAndStrings(*lst)
         return fp
 
 

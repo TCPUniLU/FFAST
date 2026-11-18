@@ -21,18 +21,20 @@ from ffast.io import frame_index as fi
 from ffast.loaders.ase import aseDatasetLoader, read_atom_field, read_frame_field
 from tests.ffast.read_once_fixtures import FILES, REPO_FILES
 
+# Replaced on purpose when fingerprints moved from md5 to chunked SHA-256
+# (ADR 0107); the arrays and the formula they hash are the same.
 GOLDEN = {
-    ("uniform.extxyz", None, None): "e49d3b353515c35ba73346342e8faa42",
-    ("variable.extxyz", None, None): "2b3b68f068afa8abfe5ca002eb139b23",   # picks energy_mace/forces_mace
-    ("variable.extxyz", "energy", "forces"): "0a8df1815fa50e7387f87abfb2f44cb6",  # int64 energies
-    ("variable.extxyz", "", ""): "0a8df1815fa50e7387f87abfb2f44cb6",
-    ("columns_change.extxyz", None, None): "037b94e52d74f636412b42677fb20101",
-    ("forces_change.extxyz", None, None): "791a81814f073006e4a3e24f0bda770d",   # no forces at all
-    ("plain.xyz", None, None): "94a08854db1569325cd84538a091a415",
+    ("uniform.extxyz", None, None): "3ca5c816aa6c67c6a7cd5686c84905483a806cc6900b950ff862cf4df2d25d24",
+    ("variable.extxyz", None, None): "6d599b9e185d3f088f8e6ac5c6f0ad423fef28572678ca680096ea4bd3a532d3",   # picks energy_mace/forces_mace
+    ("variable.extxyz", "energy", "forces"): "8970ceae2f2705fc5a941f9b6985831bbe15d8f2941fcbc6f72acc2a4c636a6e",  # int64 energies
+    ("variable.extxyz", "", ""): "8970ceae2f2705fc5a941f9b6985831bbe15d8f2941fcbc6f72acc2a4c636a6e",
+    ("columns_change.extxyz", None, None): "7ef1e6056737f816967d99a6b20dc235f4dd47bd1300a7a491dcec8a91cfcaa9",
+    ("forces_change.extxyz", None, None): "0e104cf0d3ef103180e73230c29cdb648d09e3eaa42ee9afb20a29e66d92ba4d",   # no forces at all
+    ("plain.xyz", None, None): "d5025796a9c3efca99ba548067a0754aedac2f7ec44889ffad0e643e27300a54",
 }
 REPO_GOLDEN = {
-    "dataset.xyz": "b48660a99439405f8ad99bee9069dba9",
-    "prediction.xyz": "7e87cb89e3e2d2851bdaa1eb81615591",
+    "dataset.xyz": "cb12a6556b0044566064439b2dd5579ebcd38397abeb009c96f595b8b357f9a6",
+    "prediction.xyz": "9fd4bf7367e678cbdb26c8e396850b0cf406cab54cf35accb9eb74febd2ab111",
 }
 
 

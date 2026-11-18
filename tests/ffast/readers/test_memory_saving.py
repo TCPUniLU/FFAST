@@ -840,7 +840,7 @@ def test_missing_and_mixed_integer_energies_preserve_fingerprint(tmp_path):
 def test_same_file_prediction_uses_scanned_columns_without_reads(
     tmp_path, small_budget, monkeypatch, attach
 ):
-    from ffast.cache.fingerprint import md5FromArraysAndStrings
+    from ffast.cache.fingerprint import fingerprintFromArraysAndStrings
     from ffast.core.loading_coordinator import LoadingCoordinator
     from tests.ffast.test_loading_coordinator import _file_env
 
@@ -856,7 +856,7 @@ def test_same_file_prediction_uses_scanned_columns_without_reads(
     ]
     if attach == "columns":
         expected.append("in-file")
-    expected_fp = md5FromArraysAndStrings(*expected)
+    expected_fp = fingerprintFromArraysAndStrings(*expected)
 
     def fail(*args, **kwargs):
         raise AssertionError(

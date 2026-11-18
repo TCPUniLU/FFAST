@@ -1,6 +1,6 @@
 from ffast.loaders.model import ModelLoader, uniformFrames
 import numpy as np
-from ffast.cache.fingerprint import md5FromArraysAndStrings
+from ffast.cache.fingerprint import fingerprintFromArraysAndStrings
 
 
 class SchNetModelLoader(ModelLoader):
@@ -112,7 +112,7 @@ class SchNetModelLoader(ModelLoader):
         """
 
         # TODO: not unique enough, thats just architecture!!
-        fp = md5FromArraysAndStrings(str(self.model))
+        fp = fingerprintFromArraysAndStrings(str(self.model))
 
         return fp
 

@@ -205,15 +205,3 @@ def _sgdml_bytes(arg):
             return np.concatenate([a.ravel() for a in arg])
         return np.array(arg).ravel()
     raise TypeError(f"sgdml_md5 cannot hash {type(arg).__name__}: {arg!r}")
-
-
-# Removed in step 2 of ADR 0107 (every caller moves to the functions above).
-def md5FromArraysAndStrings(*args):
-    return sgdml_md5(*args)
-
-
-def md5FromParts(parts):
-    fp = hashlib.md5()
-    for part in parts:
-        fp.update(part.digest())
-    return fp.hexdigest()

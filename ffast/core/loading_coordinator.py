@@ -24,7 +24,7 @@ from ffast.loaders.ghost import GhostModelLoader
 from ffast.readers import ReaderError
 from ffast.readers.match import Facts, PredictionRefused, check_prediction
 from ffast.readers.pairing import pair_names
-from ffast.cache.fingerprint import md5FromArraysAndStrings
+from ffast.cache.fingerprint import fingerprintFromArraysAndStrings
 
 logger = logging.getLogger("FFAST")
 
@@ -400,7 +400,7 @@ class LoadingCoordinator:
                 units=contents.get("units") or None,
                 xyz=getattr(readerClass, "name", None) == "xyz")
             available = [x for x in (E, Fv) if x is not None]
-            fingerprint = md5FromArraysAndStrings(*available)
+            fingerprint = fingerprintFromArraysAndStrings(*available)
         except (ReaderError, NotEnoughMemory) as e:
             # Its text as it is, no traceback (ADR 0095, decision 8).
             logger.error(str(e), extra={"popup": on_error is None})
@@ -905,7 +905,7 @@ class LoadingCoordinator:
                     logger.warning(f"Prediction '{model_name}' has neither energies nor forces; skipped.")
                     continue
                 available = [x for x in (E, None if F is None else F.values) if x is not None]
-                ghost_fp = md5FromArraysAndStrings(*available, model_name)
+                ghost_fp = fingerprintFromArraysAndStrings(*available, model_name)
 
 
                 if not self._ingestPrediction(
@@ -955,7 +955,7 @@ class LoadingCoordinator:
                               n_file_frames=dataset.sourceFrameCount, counts=np.diff(offsets))
                 if not self._ingestPrediction(
                     dataset, E, F, path=path, name=model_name,
-                    fingerprint=md5FromArraysAndStrings(*available, model_name),
+                    fingerprint=fingerprintFromArraysAndStrings(*available, model_name),
                     source=source, facts=facts, energy_key=ek or "", force_key=fk or "",
                 ):
                     continue

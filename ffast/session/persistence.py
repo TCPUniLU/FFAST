@@ -217,6 +217,7 @@ class SessionPersistence:
         self.loadInfo(info)
 
         ## LOAD DATASETS AND MODELS FROM INFO
+        warned_old_fingerprints = False
         if info is not None and "objects" in info:
             for fingerprint, obj_info in info["objects"].items():
                 obj_path = obj_info.get("path")
@@ -294,6 +295,16 @@ class SessionPersistence:
                     loaded = self._env.datasets.get(fingerprint)
                     if loaded is not None and obj_info.get("units"):
                         loaded.setUnits(obj_info["units"])
+                    elif (loaded is None and not warned_old_fingerprints
+                            and self._env.getDatasetFromPath(obj_path) is not None):
+                        # The file loaded, under a fingerprint the session
+                        # does not know (ADR 0107): nothing keyed by the old
+                        # one can be found. Say so once.
+                        warned_old_fingerprints = True
+                        logger.warning(
+                            f"{os.path.basename(path)} was saved before FFAST changed its "
+                            "fingerprints (ADR 0107); units and cached predictions saved "
+                            "with it are not restored.")
                     logger.info(
                         "Session restore: loaded %s (%s)", obj_name, dataset_type,
                     )

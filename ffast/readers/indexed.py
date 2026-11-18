@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ffast.cache.fingerprint import SCHEME, ChunkHasher
 from ffast.io.batched import BatchedArray
 from ffast.io.budget import budget
 from ffast.io.extxyz_arrays import NotEnoughMemory, NotFast
@@ -186,6 +187,7 @@ class IndexedStore:
             getattr(reader, "cache_version", 1),
             self.path,
             self.state,
+            SCHEME,
         )
         h = hashlib.sha256(repr(identity).encode())
         h.update(self.frames)
@@ -306,7 +308,7 @@ class IndexedStore:
             if not len(self.counts):
                 raise ReaderError(f"{os.path.basename(self.path)} has no frames")
             h = hashlib.sha256(repr((1, self.reader.name,
-                getattr(self.reader, "cache_version", 1), self.path, self.state)).encode())
+                getattr(self.reader, "cache_version", 1), self.path, self.state, SCHEME)).encode())
             h.update(self.frames)
             self.identity = h.hexdigest()
             # Publish the parsed windows under the final selection identity.
@@ -863,7 +865,7 @@ class IndexedStore:
             # Retain both integer and promoted-real digests: an integer
             # header may acquire a missing/real value in a later batch.
             for d in {dtype.str, np.dtype(np.float64).str}:
-                info["hashes"][d] = hashlib.md5()
+                info["hashes"][d] = ChunkHasher(info["tail"], np.dtype(d))
                 if before:
                     self._hash_missing(
                         info["hashes"][d],
@@ -886,7 +888,7 @@ class IndexedStore:
             info["dtype"] = np.result_type(info["dtype"], value.dtype)
             info["has_nan"] |= bool(np.isnan(value).any())
             for d, h in info["hashes"].items():
-                h.update(np.ascontiguousarray(value, dtype=np.dtype(d)))
+                h.update(value)
 
     @staticmethod
     def _hash_missing(h, n, tail, dtype):

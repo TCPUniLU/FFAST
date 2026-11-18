@@ -110,8 +110,8 @@ class _NpzWriter:
         if "cell" in joined:
             data["lattice"] = joined["cell"][0]
         data["name"] = self.path
-        from ffast.cache.fingerprint import md5FromArraysAndStrings
-        data["md5"] = md5FromArraysAndStrings(*(data[k] for k in ("R", "E", "F") if k in data))
+        from ffast.cache.fingerprint import sgdml_md5
+        data["md5"] = sgdml_md5(*(data[k] for k in ("R", "E", "F") if k in data))
         np.savez_compressed(self.path, **data)
 
 

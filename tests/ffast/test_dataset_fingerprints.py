@@ -10,6 +10,8 @@ refactor (2026-10-16). They are literals on purpose: a test that recomputed
 them with the same code could never fail.
 
 If a value here must change on purpose, say so in the commit, and in the ADR.
+Every value was replaced on purpose when fingerprints moved from md5 to chunked
+SHA-256 (ADR 0107); what they hash (which arrays, which formula) is unchanged.
 The one case ADR 0058 allows is a variable file with no forces, which is not
 pinned here because its value is expected to change.
 """
@@ -61,25 +63,25 @@ ATOMS = np.array([0, 1])
 
 # name -> (builder, expected fingerprint)
 CASES = {
-    "uniform, coordinates only": (lambda: _initialised(_uniform(False)), "b7caebb08df9bbdc3a3603fc94b78e58"),
-    "uniform, energies and forces": (lambda: _initialised(_uniform(True)), "5f42b75c5eabfacbec2764e184f0e7c2"),
-    "variable, energies and forces": (lambda: _initialised(_variable_with_forces()), "328e2260e4fee6afa0a35d2ff2f8d09b"),
+    "uniform, coordinates only": (lambda: _initialised(_uniform(False)), "5171c529082db9ed912dcbc138494cd86a37fbd8e53016367e17c9f5a27247f9"),
+    "uniform, energies and forces": (lambda: _initialised(_uniform(True)), "6882b73be1d53c5f5854bb721f6bf18098770580050d85b166ae9167a2119add"),
+    "variable, energies and forces": (lambda: _initialised(_variable_with_forces()), "39b996bcba126e99b7782156fbf4676d12ffb9960123c3b586fe41d2d0820070"),
     "live subset of uniform": (
-        lambda: _initialised(DatasetView.subset(_initialised(_uniform(True)), None, FRAMES, "S")), "579905436f335c30db08e81818dd8cde"),
+        lambda: _initialised(DatasetView.subset(_initialised(_uniform(True)), None, FRAMES, "S")), "ba55bf1480f3a2a9049ba9e8d173ea395b371e7a31fbfb2f49a7aa9b8f72662e"),
     "frozen subset of uniform": (
-        lambda: _initialised(DatasetView.frozenSubset(_initialised(_uniform(True)), None, FRAMES, "S")), "0bbfaa860df0d3b5165ba80dadb03168"),
+        lambda: _initialised(DatasetView.frozenSubset(_initialised(_uniform(True)), None, FRAMES, "S")), "3097c3011e29e71d4bd09b759a57cc3d0e0a16975cbf4af3b4f4c46a4d23d0aa"),
     "atom subset of uniform": (
-        lambda: _initialised(DatasetView.atomSubset(_initialised(_uniform(True)), ATOMS)), "d7e258a5e4b147518b495c184fd4ebbc"),
+        lambda: _initialised(DatasetView.atomSubset(_initialised(_uniform(True)), ATOMS)), "47ef76380e66839bae4f79ab1adc0ae3c65d4e5b0df5cf90423571431ab0f29f"),
     "live subset of variable": (
-        lambda: _initialised(DatasetView.subset(_initialised(_variable_with_forces()), None, FRAMES, "S")), "dbde3e571cf466753ffb35fcafe95e7e"),
+        lambda: _initialised(DatasetView.subset(_initialised(_variable_with_forces()), None, FRAMES, "S")), "b9e2e77d2b5d0038c039707b7597fb27b7d7adb4ce8ad2f29417e2b64c742287"),
     "frozen subset of variable": (
-        lambda: _initialised(DatasetView.frozenSubset(_initialised(_variable_with_forces()), None, FRAMES, "S")), "a0645fcc35cb98dfd6a2029760d1d0fd"),
+        lambda: _initialised(DatasetView.frozenSubset(_initialised(_variable_with_forces()), None, FRAMES, "S")), "ea336af030d2870775d7f95f97fe62d577d1320a3d07ab93a95351fec9dd3a87"),
     # Atom numbers are refused below a variable parent since ADR 0067; its
     # element subset's formula is new there (2026-10-28).
     "element subset of variable": (
-        lambda: _initialised(DatasetView.elementSubset(_initialised(_variable_with_forces()), [6])), "a98b28b9203f8875b8917643c63214fb"),
+        lambda: _initialised(DatasetView.elementSubset(_initialised(_variable_with_forces()), [6])), "31484212efe195b6a91a93b415910cf16e09dca07eb383adcab21f8e97bd1571"),
     "same formula, atoms in different order": (
-        lambda: _initialised(_same_formula_different_order()), "e7b297e53caa1652933b842080bfb299"),
+        lambda: _initialised(_same_formula_different_order()), "2c2dda76e4cb21746b6912aa7f0db21869368a7657ad659f12d7e35c73dd0cef"),
     }
 
 
@@ -141,4 +143,18 @@ def test_sgdml_file_fingerprint_is_unchanged(tmp_path):
     path = tmp_path / "s.npz"
     np.savez(path, R=rng.normal(size=(4, 3, 3)), E=rng.normal(size=(4, 1)),
              F=rng.normal(size=(4, 3, 3)), z=np.array([1, 1, 8]))
-    assert _initialised(sGDMLDatasetLoader(str(path))).fingerprint == "29b040d2ebc03b301645cd968f995526"
+    assert _initialised(sGDMLDatasetLoader(str(path))).fingerprint == "ac28b172d873bb1e23602c5e8ba6e21017c495a397b1107991d0d2823a3f77cc"
+
+
+def test_the_md5_field_of_an_sgdml_file_keeps_sgdmls_recipe(tmp_path):
+    """The dataset's fingerprint moved to chunked SHA-256 (ADR 0107), but
+    sGDML checks the ``md5`` field of its own files: md5 of the md5 of each
+    array's flattened bytes."""
+    import hashlib
+    from ffast.cache.fingerprint import sgdml_md5
+    rng = np.random.default_rng(7)
+    R, E, F = rng.normal(size=(4, 3, 3)), rng.normal(size=(4, 1)), rng.normal(size=(4, 3, 3))
+    outer = hashlib.md5()
+    for a in (R, E, F):
+        outer.update(hashlib.md5(a.ravel()).digest())
+    assert sgdml_md5(R, E, F) == outer.hexdigest()

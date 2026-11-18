@@ -11,7 +11,7 @@ import os
 import numpy as np
 from ffast.io.batched import BatchedArray, asarray
 
-from ffast.cache.fingerprint import md5FromArraysAndStrings
+from ffast.cache.fingerprint import array_digest, fingerprintFromArraysAndStrings, fingerprintFromParts
 from ffast.loaders.ase import _same_formula_on_sample
 from ffast.loaders.dataset import FlatDatasetLoader, isOneFrame
 from ffast.readers.contract import ReaderError
@@ -145,23 +145,19 @@ class ReaderDataset(ReaderFields, FlatDatasetLoader):
         elements when every frame has the same formula (on the fixed sample),
         every atom's otherwise; then positions, energies, forces."""
         if self.storage is not None:
-            import hashlib
             store = self.storage
-            z = (hashlib.md5(store.first_numbers).digest() if store.same_formula else
+            z = (bytes.fromhex(array_digest(store.first_numbers)) if store.same_formula else
                  bytes.fromhex(store.info["numbers"]["digest"]))
             parts = [z, bytes.fromhex(store.info["positions"]["digest"])]
             for key in (f"energy:{self.energy_key}", f"forces:{self.force_key}"):
                 if key in store.info:
                     parts.append(bytes.fromhex(store.info[key]["digest"]))
-            final = hashlib.md5()
-            for part in parts:
-                final.update(part)
-            return final.hexdigest()
+            return fingerprintFromParts(parts)
         z = self.z_flat
         if _same_formula_on_sample(self.molecule_offsets, z):
             z = z[:self.molecule_offsets[1]]
         arrays = (z, self.R_flat, self.E, self.F_flat)
-        return md5FromArraysAndStrings(*(a for a in arrays if a is not None))
+        return fingerprintFromArraysAndStrings(*(a for a in arrays if a is not None))
 
     def _unitsOfTheFile(self, labels, file):
         """The reader's unit labels become the dataset's units; the user can

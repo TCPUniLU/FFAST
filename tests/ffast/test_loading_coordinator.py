@@ -805,8 +805,9 @@ def test_a_missing_model_file_reports_why(tmp_path):
 
 # ── in-file prediction forces stay flat (ADR 0080) ──────────────────────────
 
-GOLDEN_RAGGED = "d9bedd71db5d2a6b395ecfa9e02c9673"
-GOLDEN_UNIFORM = "7d65953bc580eca308af59d81b51847c"
+# Replaced on purpose when fingerprints moved from md5 to chunked SHA-256 (ADR 0107).
+GOLDEN_RAGGED = "5124541e8f14178fa017b0545b0b8d58b9f44a8c4d70cdbf6fe29be28e97e82e"
+GOLDEN_UNIFORM = "bd8601fb740eebc54220860dcf762b0fb528faab0bbf5cec8e7ae217b9a48343"
 
 
 def _prediction_file(tmp_path, symbols_per_frame):

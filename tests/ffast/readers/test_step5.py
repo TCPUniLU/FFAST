@@ -91,6 +91,7 @@ def _persistence(tmp_path):
     p._env = SimpleNamespace(
         datasetTypes={"sGDML": object},
         datasets=SimpleNamespace(get=lambda fp: None),
+        getDatasetFromPath=lambda path: None,
         loadDataset=lambda *a, **k: loaded.append((a, k)),
         lookForGhosts=lambda: None,
     )

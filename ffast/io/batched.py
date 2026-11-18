@@ -7,7 +7,6 @@ slices, or map pointwise operations without materialising the whole input.
 
 from __future__ import annotations
 
-import hashlib
 import math
 
 import numpy as np
@@ -245,9 +244,11 @@ class BatchedArray(NDArrayOperatorsMixin):
 
     def content_digest(self):
         if self.digest is None:
-            h = hashlib.md5()
+            from ffast.cache.fingerprint import ChunkHasher
+
+            h = ChunkHasher(self.shape[1:], self.dtype)
             for _, _, value in blocks(self):
-                h.update(np.ascontiguousarray(value))
+                h.update(value)
             self.digest = h.hexdigest()
         return self.digest
 

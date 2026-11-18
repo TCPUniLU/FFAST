@@ -126,14 +126,14 @@ class SpookyNetModelLoader(ModelLoader):
         self.model.eval()
 
     def getFingerprint(self):
-        from ffast.cache.fingerprint import md5FromArraysAndStrings
+        from ffast.cache.fingerprint import fingerprintFromArraysAndStrings
 
         lst = []
         for child in self.model.children():
             for param in child.parameters():
                 lst.append(param.detach().numpy())
 
-        fp = md5FromArraysAndStrings(*lst)
+        fp = fingerprintFromArraysAndStrings(*lst)
         return fp
 
     def predict(self, dataset, indices=None, batchSize=50, taskID=None):

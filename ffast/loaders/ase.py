@@ -1,8 +1,7 @@
 import os
-import hashlib
 import logging
 import numpy as np
-from ffast.cache.fingerprint import md5FromParts
+from ffast.cache.fingerprint import fingerprintFromArraysAndStrings
 from ffast.loaders.dataset import FlatDatasetLoader, isOneFrame
 import ase.io
 from ase.calculators.calculator import PropertyNotImplementedError, all_properties
@@ -335,19 +334,13 @@ class aseDatasetLoader(FlatDatasetLoader):
             return None
 
     def getFingerprint(self):
-        """md5 of (elements, positions, energies, forces): the same bytes, in
-        the same order, as the frame-by-frame hash it replaces (ADR 0058
-        section 3), so saved sessions and caches still match."""
+        """Chunked SHA-256 fingerprint of (elements, positions, energies,
+        forces), in that order (ADR 0058 section 3, ADR 0107)."""
         R, F, E = self._joinedArrays
         z = self._z_flat
         if self._fingerprintOneFrameOfElements:
             z = z[:self.molecule_offsets[1]]
-        parts = [hashlib.md5(np.ascontiguousarray(z)), hashlib.md5(np.ascontiguousarray(R))]
-        if E is not None:
-            parts.append(hashlib.md5(np.ascontiguousarray(E)))
-        if F is not None:
-            parts.append(hashlib.md5(np.ascontiguousarray(F)))
-        return md5FromParts(parts)
+        return fingerprintFromArraysAndStrings(*(a for a in (z, R, E, F) if a is not None))
 
     def hasForces(self):
         return self._has_forces

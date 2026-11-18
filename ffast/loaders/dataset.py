@@ -6,7 +6,7 @@ import logging
 from scipy.spatial.distance import pdist
 from ffast.core.events import EventClass
 from ffast.core.flat_frames import FlatFrames
-from ffast.cache.fingerprint import md5FromArraysAndStrings
+from ffast.cache.fingerprint import fingerprintFromArraysAndStrings
 from ffast.core.util import removeExtension, hexToRGB, cleanBondIdxsArray
 from ffast.chemistry import zIntToZStr, zStrToZInt
 from ffast.chemistry import covalentBonds
@@ -257,7 +257,7 @@ class DatasetLoader(EventClass):
         except (PropertyNotImplementedError, RuntimeError):
             logger.warning("Forces not available for fingerprint. Using coordinates only.")
             f = None
-        fp = md5FromArraysAndStrings(*(x for x in (z, r, e, f) if x is not None))
+        fp = fingerprintFromArraysAndStrings(*(x for x in (z, r, e, f) if x is not None))
 
         return fp
 
@@ -669,7 +669,7 @@ class FlatDatasetLoader(DatasetLoader):
         """Generate fingerprint from all data."""
         # Use all flat arrays for fingerprint
         arrays = (self.z_flat, self.R_flat, self.E, self.F_flat)
-        fp = md5FromArraysAndStrings(*(i for i in arrays if i is not None))
+        fp = fingerprintFromArraysAndStrings(*(i for i in arrays if i is not None))
 
         return fp
 
@@ -806,25 +806,25 @@ class DatasetView(DatasetLoader):
         """Parent, model and name, not frames: the same subset is refreshed as
         the zoom changes."""
         if model is None:
-            return md5FromArraysAndStrings(parent.fingerprint, subName)
-        return md5FromArraysAndStrings(parent.fingerprint, model.fingerprint, subName)
+            return fingerprintFromArraysAndStrings(parent.fingerprint, subName)
+        return fingerprintFromArraysAndStrings(parent.fingerprint, model.fingerprint, subName)
 
     @staticmethod
     def frozenFingerprint(parent, model, subName, frames):
         if model is None:
-            return md5FromArraysAndStrings(parent.fingerprint, subName, frames)
-        return md5FromArraysAndStrings(parent.fingerprint, model.fingerprint, subName, frames)
+            return fingerprintFromArraysAndStrings(parent.fingerprint, subName, frames)
+        return fingerprintFromArraysAndStrings(parent.fingerprint, model.fingerprint, subName, frames)
 
     @staticmethod
     def atomSubsetFingerprint(parent, atoms):
-        return md5FromArraysAndStrings(parent.fingerprint, atoms)
+        return fingerprintFromArraysAndStrings(parent.fingerprint, atoms)
 
     @staticmethod
     def elementSubsetFingerprint(parent, elements):
         """Parent and the elements kept: "C" and "C -H" of a carbon and
         hydrogen dataset keep the same, so they are one subset."""
         kept = np.asarray(sorted(int(z) for z in elements), dtype=np.int64)
-        return md5FromArraysAndStrings(parent.fingerprint, "elements", kept)
+        return fingerprintFromArraysAndStrings(parent.fingerprint, "elements", kept)
 
     def getFingerprint(self):
         if self.atoms is not None:

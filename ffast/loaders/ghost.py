@@ -1,6 +1,6 @@
 from ffast.loaders.model import ModelLoader
 import numpy as np
-from ffast.cache.fingerprint import md5FromArraysAndStrings
+from ffast.cache.fingerprint import fingerprintFromArraysAndStrings
 
 
 class GhostModelLoader(ModelLoader):

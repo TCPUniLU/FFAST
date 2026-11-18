@@ -1,6 +1,6 @@
 from ffast.loaders.model import ModelLoader, uniformFrames
 import numpy as np
-from ffast.cache.fingerprint import md5FromArraysAndStrings
+from ffast.cache.fingerprint import fingerprintFromArraysAndStrings, sgdml_md5
 from ffast.loaders.dataset import FlatDatasetLoader, stackFrames
 
 
@@ -95,7 +95,7 @@ class sGDMLModelLoader(ModelLoader):
             s (str): Unique fingerprint
         """
 
-        fp = md5FromArraysAndStrings(*self.fpArrays)
+        fp = fingerprintFromArraysAndStrings(*self.fpArrays)
 
         return fp
 
@@ -164,7 +164,7 @@ class sGDMLDatasetLoader(FlatDatasetLoader):
         """The formula of a uniform file, unchanged (ADR 0058, section 3):
         one structure's elements, then positions, energies, forces."""
         arrays = (self.z, self.R_flat, self.E, self.F_flat)
-        return md5FromArraysAndStrings(*(a for a in arrays if a is not None))
+        return fingerprintFromArraysAndStrings(*(a for a in arrays if a is not None))
 
     def getChemicalFormula(self):
         return self.chem
@@ -194,7 +194,7 @@ class sGDMLDatasetLoader(FlatDatasetLoader):
             "name": path,
         }
 
-        md5 = md5FromArraysAndStrings(data["R"], data["E"], data["F"])
+        md5 = sgdml_md5(data["R"], data["E"], data["F"])
         data["md5"] = md5
 
         np.savez_compressed(path, **data)

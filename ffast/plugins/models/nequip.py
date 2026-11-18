@@ -1,6 +1,6 @@
 from ffast.loaders.model import ModelLoaderACE
 import numpy as np
-from ffast.cache.fingerprint import md5FromArraysAndStrings
+from ffast.cache.fingerprint import fingerprintFromArraysAndStrings
 
 
 class NequipModelLoader(ModelLoaderACE):
@@ -31,7 +31,7 @@ class NequipModelLoader(ModelLoaderACE):
             for param in child.parameters():
                 lst.append(param.detach().numpy())
 
-        fp = md5FromArraysAndStrings(*lst)
+        fp = fingerprintFromArraysAndStrings(*lst)
         return fp
 
 
