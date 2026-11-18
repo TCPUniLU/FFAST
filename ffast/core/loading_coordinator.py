@@ -397,7 +397,8 @@ class LoadingCoordinator:
             facts = Facts(
                 name=name, n_kept=len(loaded.frames), n_file_frames=loaded.n_file_frames,
                 counts=counts, numbers=arrays.get("numbers"), positions=arrays.get("positions"),
-                units=contents.get("units") or None)
+                units=contents.get("units") or None,
+                xyz=getattr(readerClass, "name", None) == "xyz")
             available = [x for x in (E, Fv) if x is not None]
             fingerprint = md5FromArraysAndStrings(*available)
         except (ReaderError, NotEnoughMemory) as e:

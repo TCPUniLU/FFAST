@@ -324,3 +324,31 @@ def test_an_sgdml_dataset_records_its_files_frame_count(tmp_path):
              z=np.array([6, 1, 8]))
     assert sGDMLDatasetLoader(path, slice_num=3).sourceFrameCount == 10
     assert sGDMLDatasetLoader(path).sourceFrameCount == 10
+
+
+def _xyz(path, counts):
+    """An xyz file with one frame per count: n, a comment line, n atom lines."""
+    lines = []
+    for n in counts:
+        lines += [str(n), "Properties=species:S:1:pos:R:3:forces:R:3 energy=-1.0"]
+        lines += ["H 0.0 0.0 0.0 0.0 0.0 0.0"] * n
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+def test_same_total_atoms_split_differently_is_refused_with_file_lines(tmp_path):
+    from ffast.readers.xyz_reader import XyzReader
+
+    dataset_path = _xyz(tmp_path / "data.xyz", [3, 3, 4, 3])      # 13 atoms
+    ds = ReaderDataset(dataset_path, chunks.read_arrays(XyzReader, dataset_path), "xyz")
+    ds.initialise()
+    env = _file_env(ds, key=ds.fingerprint)
+    coordinator = LoadingCoordinator(env)
+    prediction = _xyz(tmp_path / "pred.xyz", [3, 3, 3, 4])        # 13 atoms too
+    errors = []
+    coordinator.loadPrepredictedDataset(prediction, ds.fingerprint, reader="xyz",
+                                        on_error=errors.append)
+    assert errors == ["Atom count mismatch for prediction 'pred.xyz': frame 2 has 3 atoms, "
+                      "the dataset's frame 2 has 4 (line 11 of data.xyz in the dataset, "
+                      "line 11 of pred.xyz in the prediction)."]
+    assert env.data.stored == []

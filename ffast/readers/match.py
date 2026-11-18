@@ -12,6 +12,7 @@ file) describes it as ``Facts``; the check compares them with the dataset.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -39,6 +40,7 @@ class Facts:
     numbers: np.ndarray | None = None  # atomic numbers, every kept atom
     positions: np.ndarray | None = None  # (atoms, 3), every kept atom
     units: dict | None = None  # dimension -> label
+    xyz: bool = False          # a plain xyz file: n atoms + 2 lines per frame, so lines can be named
 
 
 def check_prediction(dataset, facts: Facts) -> list[str]:
@@ -66,9 +68,10 @@ def check_prediction(dataset, facts: Facts) -> list[str]:
         differ = np.flatnonzero(mine != theirs)
         if differ.size:
             i = int(differ[0])
+            where = _lines(dataset, facts, mine, theirs, i)
             raise PredictionRefused(
                 f"Atom count mismatch for prediction '{name}': frame {label(i)} has "
-                f"{int(mine[i])} atoms, the dataset's frame {label(i)} has {int(theirs[i])}.")
+                f"{int(mine[i])} atoms, the dataset's frame {label(i)} has {int(theirs[i])}{where}.")
 
         elements = _call(dataset, "getAllElements")
         if facts.numbers is not None and elements is not None:
@@ -116,6 +119,22 @@ def check_prediction(dataset, facts: Facts) -> list[str]:
     for text in problems:
         warn(text)
     return problems
+
+
+def _lines(dataset, facts, mine, theirs, frame):
+    """``" (line N of a.xyz in the dataset, line M of b.xyz in the prediction)"``
+    for a mismatch between two plain xyz files, else ``""``. An xyz frame is
+    n atoms + 2 lines, so its first line follows from the earlier frames'
+    atom counts; nothing is read again. Only when every frame of both files
+    was kept (with a stride the skipped frames' sizes are unknown)."""
+    path = getattr(dataset, "path", None)
+    if (not facts.xyz or getattr(dataset, "reader_name", None) != "xyz" or not path
+            or facts.n_file_frames != len(mine)
+            or getattr(dataset, "sourceFrameCount", None) != len(theirs)):
+        return ""
+    first = lambda counts: int(np.sum(counts[:frame] + 2)) + 1
+    return (f" (line {first(theirs)} of {os.path.basename(path)} in the dataset, "
+            f"line {first(mine)} of {facts.name} in the prediction)")
 
 
 def _call(dataset, method):
