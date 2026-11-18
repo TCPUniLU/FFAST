@@ -117,6 +117,9 @@ Interpret the measurements carefully:
   USB throughput. Native parser read/parse time also combines those two costs.
 - Sampled Python stacks show where threads reside, including waits and calls
   into Rust/NumPy. They are not CPU attribution or proof of GIL contention.
+- Cached batches are read through the operating system's file cache and do
+  not appear in RSS (ADR 0106), so peak RSS no longer shows how much cache
+  FFAST reads.
 - RSS summed across descendants can double-count shared pages. System memory
   and swap describe the whole host. Unavailable swap counters are `null`, never
   inferred to be zero. macOS sandboxing can prevent reading those counters.

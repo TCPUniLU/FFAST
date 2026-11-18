@@ -262,7 +262,9 @@ class Profile:
             "notes": ["Span times are inclusive and overlap across threads.",
                       "Logical bytes are requested payload, not device I/O.",
                       "Stack samples measure residency, not CPU attribution.",
-                      "Tree RSS can double-count shared pages; system swap is host-wide."]})
+                      "Tree RSS can double-count shared pages; system swap is host-wide.",
+                      "Cached batches are read through the operating system's file cache "
+                      "and do not appear in RSS (ADR 0106)."]})
         packages = {}
         for name in ("numpy", "scipy", "ase", "psutil", "ffast-xyz"):
             try:
