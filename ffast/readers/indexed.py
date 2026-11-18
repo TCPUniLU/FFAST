@@ -281,12 +281,14 @@ class IndexedStore:
         self._scan_allowance = None
         self._kept_level = None
         pending = None
+        resume_at = 0
         if self.use_cache and budget().parsed_limit:
-            # What an earlier, stopped scan left of this identity is not
-            # trusted here (resuming comes later): start its record afresh.
             self._record = scan_record.ScanRecord(self.folder, self.identity)
             try:
-                self._record.clear()
+                scan_record.ScanRecord.sweep_changed(
+                    self.folder, self.path, self.state, self.identity,
+                    {s.identity for s in list(_live_stores) if s is not self})
+                resume_at = self._resume()
             except OSError:
                 self._record = None
         try:
@@ -325,12 +327,20 @@ class IndexedStore:
                     context = contextvars.copy_context()
                     pending = parsing.submit(context.run, consume, starts, counts, end)
 
-                index = frame_index.scan(self.path, on_batch=found,
+                if resume_at and progress and callable(getattr(progress, "bytes_read", None)):
+                    # Report from where the scan goes on, not from zero.
+                    progress.bytes_read(min(resume_at, self.state[2]), self.state[2], len(self.counts))
+                index = frame_index.scan(self.path, on_batch=found, start=resume_at,
                     batch_bytes=min(128 * 2**20, max(1024, budget().limit // 16)))
                 if pending is not None:
                     pending.result()
             del self._hash_pool
             self.check_source()
+            if resume_at:
+                # The scan saw only the frames after the committed ones.
+                index = frame_index.FrameIndex(
+                    self.path, np.append(self.starts, index.starts[-1]),
+                    self.state[2], self.state[3], self.counts)
             if not len(self.counts):
                 raise ReaderError(f"{os.path.basename(self.path)} has no frames")
             self._save_chunk_sidecar()
@@ -360,6 +370,12 @@ class IndexedStore:
                              (index.starts, index.counts))
             if progress:
                 progress(len(self.counts), len(self.counts))
+        except NotFast:
+            # The Python scanner takes over and restarts the whole load on its
+            # validated path: this record has no use then.
+            if self._record is not None:
+                self._record.abandon("the fast frame finder handed the file over")
+            raise
         finally:
             # Only half-written files go; committed batches stay (ADR 0107).
             if self.folder.exists():
@@ -398,6 +414,142 @@ class IndexedStore:
             self.use_cache = False
             return None
         return handle
+
+    def _resume(self):
+        """Go on from the committed windows of an interrupted scan of this
+        identity: the byte to continue at, or 0 for a scan from the start. A
+        record that does not fit the file or the files on disk is deleted
+        with its batches, with one line in the log (ADR 0107)."""
+        record = self._record
+        state = record.load()
+        if state is None:
+            if record.exists():
+                log.info("%s: a scan record could not be read; scanning from the start",
+                         os.path.basename(self.path))
+                record.discard()
+            else:
+                record.clear()          # stray temporary files only
+            return 0
+        try:
+            return self._restore(state)
+        except (OSError, ValueError, KeyError, TypeError, EOFError, zipfile.BadZipFile) as exc:
+            log.info("%s: the earlier scan cannot be continued (%s); scanning from the start",
+                     os.path.basename(self.path), exc)
+            self._reset_scan_state()
+            record.discard()
+            return 0
+
+    def _reset_scan_state(self):
+        self.starts = np.empty(0, dtype=np.int64)
+        self.ends = np.empty(0, dtype=np.int64)
+        self.counts = np.empty(0, dtype=np.int64)
+        self.offsets = np.zeros(1, dtype=np.int64)
+        self.frames = np.empty(0, dtype=np.int64)
+        self.ranges = []
+        self.info = {}
+        self.element_set = set()
+        self.first_numbers = None
+        self.uniform = True
+        self._kept_level = None
+        self._scan_allowance = None
+        self._small_parts.clear()
+        self._small_bytes = 0
+
+    def _restore(self, state):
+        """Rebuild the scan's state from a progress record, checking it against
+        what is on disk. Raises ValueError (or an OSError) for any mismatch."""
+        from ffast.cache.fingerprint import CHUNK_ROWS
+        from ffast.readers.text import per_atom
+
+        record = self._record
+        if state["scheme"] != SCHEME.decode():
+            raise ValueError("it used another hash scheme")
+        if state["path"] != self.path or state["state"] != list(self.state):
+            raise ValueError("the file changed")
+        frame_end, atom_end, byte_end = (int(state[k]) for k in ("frame_end", "atom_end", "byte_end"))
+        ranges = [tuple(map(int, r)) for r in state["ranges"]]
+        if (not ranges or ranges[0][0] != 0 or ranges[-1][1] != frame_end
+                or any(a >= b for a, b in ranges)
+                or any(x[1] != y[0] for x, y in zip(ranges, ranges[1:]))):
+            raise ValueError("its windows do not line up")
+        for a, b in ranges:
+            with zipfile.ZipFile(self._cache_path(a, b)) as archive:
+                if not archive.namelist():
+                    raise ValueError("a batch is empty")
+        frames_length, chunks_length = int(state["frames_length"]), int(state["chunks_length"])
+        if (frames_length != 16 * frame_end or record.frames_bin.stat().st_size < frames_length
+                or record.chunks_bin.stat().st_size < chunks_length):
+            raise ValueError("its frame or chunk file is too short")
+        with open(record.frames_bin, "rb") as f:
+            pairs = np.frombuffer(f.read(frames_length), dtype="<i8").reshape(-1, 2)
+        starts, counts = pairs[:, 0].copy(), pairs[:, 1].copy()
+        if (len(starts) != frame_end or (len(starts) > 1 and (np.diff(starts) <= 0).any())
+                or starts[-1] >= byte_end or (counts < 0).any()):
+            raise ValueError("its frame list is inconsistent")
+        offsets = np.concatenate(([0], np.cumsum(counts)))
+        if int(offsets[-1]) != atom_end:
+            raise ValueError("its atom count is inconsistent")
+        digests = {}
+        with open(record.chunks_bin, "rb") as f:
+            for line in f.read(chunks_length).decode().splitlines():
+                key, dtype, index, digest = json.loads(line)
+                found = digests.setdefault((key, dtype), [])
+                if index != len(found):
+                    raise ValueError("its chunk digests are out of order")
+                found.append(bytes.fromhex(digest))
+        info = {}
+        with np.load(self.folder / state["tail_file"], allow_pickle=False) as tails:
+            for key, facts in state["columns"].items():
+                rows = atom_end if per_atom(key) else frame_end
+                column = {"dtype": np.dtype(facts["dtype"]), "tail": tuple(facts["tail"]),
+                          "has_nan": bool(facts["has_nan"]), "hashes": {}}
+                for dtype, h in facts["hashers"].items():
+                    found = digests.get((key, dtype), [])
+                    if (h["rows"] != rows or h["chunks"] != rows // CHUNK_ROWS
+                            or len(found) != h["chunks"]):
+                        raise ValueError("its chunk digests do not match the frames")
+                    hasher = ChunkHasher(column["tail"], np.dtype(dtype))
+                    tail = tails[h["tail"]]
+                    if tail.shape[0] != rows % CHUNK_ROWS:
+                        raise ValueError("an unfinished chunk is the wrong size")
+                    hasher.restore(found, tail)
+                    column["hashes"][dtype] = hasher
+                info[key] = column
+        # Per-frame columns come back from the batches: level 1 is in every one.
+        self._small_parts.clear()
+        self._small_bytes = 0
+        for a, b in ranges:
+            self._remember_small(self._small_from_batch(a, b), a, b)
+        os.truncate(record.frames_bin, frames_length)
+        os.truncate(record.chunks_bin, chunks_length)
+        record.adopt(state, {(k, d): len(v) for (k, d), v in digests.items()})
+        self.starts = starts
+        self.ends = np.concatenate((starts[1:], [byte_end])).astype(np.int64)
+        self.counts = counts
+        self.offsets = offsets
+        self.frames = np.arange(frame_end, dtype=np.int64)
+        self.ranges = ranges
+        self.info = info
+        self.element_set = set(state["elements"])
+        self.first_numbers = np.asarray(state["first_numbers"], dtype=np.dtype(state["first_numbers_dtype"]))
+        self.uniform = bool(state["uniform"])
+        self._kept_level = state["kept_level"]
+        self._scan_allowance = state["allowance"]
+        return byte_end
+
+    def _small_from_batch(self, a, b):
+        """The per-frame columns (energies and frame fields) of one cached window."""
+        path = self._cache_path(a, b)
+        part = {}
+        with zipfile.ZipFile(path) as archive, open(path, "rb") as f:
+            for name in archive.namelist():
+                key = name[:-4]
+                if key.startswith(("energy:", "frame:")):
+                    value = _member_rows(archive, f, key, 0, None)
+                    if value is None:
+                        raise ValueError("a cached column cannot be read in place")
+                    part[key] = value
+        return part
 
     def _unlock_scan(self, handle):
         if handle is None:

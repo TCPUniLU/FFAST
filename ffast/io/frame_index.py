@@ -167,7 +167,7 @@ def _fast_finder():
     return ffast_xyz if callable(getattr(ffast_xyz, "find_frames", None)) else None
 
 
-def scan(path, *, progress=None, should_stop=None, on_batch=None, batch_bytes=None):
+def scan(path, *, progress=None, should_stop=None, on_batch=None, batch_bytes=None, start=0):
     """One pass over the file. A blank line between frames is an error (ASE
     would silently drop the rest); trailing blank lines are fine.
 
@@ -180,10 +180,19 @@ def scan(path, *, progress=None, should_stop=None, on_batch=None, batch_bytes=No
     their text is still hot. It requires the compiled finder and raises
     NotFast on a Python handover, allowing its caller to restart on the usual
     validated path. ``batch_bytes`` overrides the window-size target.
+
+    ``start`` is the byte of a frame to go on from, for a scan that resumes
+    after frames already committed (ADR 0107): the frames found are the ones
+    after it, and the index returned holds only those. It needs ``on_batch``,
+    so a handover to the Python scanner raises NotFast instead of counting
+    lines from the wrong place.
     """
+    if start and on_batch is None:
+        raise ValueError("A scan can start part-way only with on_batch")
     st = os.stat(path)
     starts, counts = [], []
-    line_no = pos = 0
+    line_no = 0
+    pos = int(start)
     fast = _fast_finder()
     if on_batch is not None and fast is None:
         from ffast.io.extxyz_arrays import NotFast

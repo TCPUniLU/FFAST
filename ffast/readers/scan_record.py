@@ -92,6 +92,53 @@ class ScanRecord:
         self._written.clear()
         self._frames_length = self._chunks_length = 0
 
+    def load(self):
+        """The record as a dict; None when there is none or it cannot be read."""
+        try:
+            record = json.loads(self.progress.read_text())
+        except (OSError, ValueError):
+            return None
+        return record if isinstance(record, dict) else None
+
+    def exists(self):
+        return any(path.exists() for path in self.paths())
+
+    def adopt(self, record, written):
+        """Go on appending after the committed lengths of a loaded ``record``;
+        ``written`` is how many digests of each (column, dtype) are on disk."""
+        self._frames_length = int(record["frames_length"])
+        self._chunks_length = int(record["chunks_length"])
+        self._written = dict(written)
+
+    def discard(self):
+        """Delete the record and every batch of the identity (not the manifest)."""
+        self.clear()
+        for path in self.folder.glob(self.identity + "-*.npz"):
+            path.unlink(missing_ok=True)
+
+    @staticmethod
+    def sweep_changed(folder, path, state, keep, live=()):
+        """Delete the records, and their batches, of scans of ``path`` made
+        when the file was in another state: a partial cache of a changed
+        source is fully invalid (spec 4.3). ``keep`` and the ``live``
+        identities are left alone."""
+        folder = Path(folder)
+        try:
+            records = list(folder.glob("*.progress.json"))
+        except OSError:
+            return
+        for progress in records:
+            identity = progress.name[:-len(".progress.json")]
+            if identity == keep or identity in live:
+                continue
+            other = ScanRecord(folder, identity)
+            old = other.load()
+            if old and old.get("path") == path and old.get("state") != list(state):
+                try:
+                    other.discard()
+                except OSError:
+                    pass
+
     def abandon(self, why):
         """Stop recording: the scan goes on without being resumable."""
         if self.alive:
@@ -164,6 +211,7 @@ class ScanRecord:
             "columns": columns,
             "elements": sorted(int(z) for z in store.element_set),
             "first_numbers": store.first_numbers.tolist(),
+            "first_numbers_dtype": store.first_numbers.dtype.str,
             "uniform": bool(store.uniform),
             "kept_level": store._kept_level,
             "allowance": store._scan_allowance,

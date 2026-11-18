@@ -48,7 +48,17 @@ class Progress:
             self.after(self.windows)
 
 
+def forget_ram():
+    """Windows parsed by an earlier scan stay in the shared RAM cache under the
+    same name (the cache identity is stable now); a test that counts parses
+    must start with none."""
+    owner = resources.budget()
+    owner.cache.clear()
+    owner.cache_bytes = 0
+
+
 def scan(path, progress=None):
+    forget_ram()
     return IndexedStore(XyzReader, path, XyzReader(path).contents(), [], [], [], [],
                         workers=1, scan_source=True, progress=progress)
 
