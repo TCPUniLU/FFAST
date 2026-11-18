@@ -221,6 +221,7 @@ def _stream_summary(value, square=False):
         return _summary(v ** 2 if square else np.abs(v))
     total, count = 0., 0
     for _, _, v in blocks(value):
+        v = v.astype(np.float64)
         v = v[np.isfinite(v)]
         total += float(np.sum(v * v if square else np.abs(v)))
         count += v.size

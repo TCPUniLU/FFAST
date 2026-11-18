@@ -361,7 +361,7 @@ def parity(true, pred, bins=300):
     t, p = asarray(true).ravel(), asarray(pred).ravel()
     lo, hi = np.inf, -np.inf
     for a, b, x in blocks(t):
-        y = np.asarray(p[a:b])
+        x, y = x.astype(np.float64), np.asarray(p[a:b], dtype=np.float64)
         keep = np.isfinite(x) & np.isfinite(y)
         if keep.any():
             lo = min(lo, x[keep].min(), y[keep].min())
@@ -373,7 +373,7 @@ def parity(true, pred, bins=300):
     width = (hi - lo) / bins
     counts = np.zeros(bins * bins, dtype=np.int64)
     for a, b, x in blocks(t):
-        y = np.asarray(p[a:b])
+        x, y = x.astype(np.float64), np.asarray(p[a:b], dtype=np.float64)
         keep = np.isfinite(x) & np.isfinite(y)
         col = np.minimum(((x[keep] - lo) / width).astype(np.int64), bins - 1)
         row = np.minimum(((y[keep] - lo) / width).astype(np.int64), bins - 1)
@@ -387,7 +387,7 @@ def worst(true, pred, offsets=None, *, components=True, k=50_000):
     t, p = asarray(true).ravel(), asarray(pred).ravel()
     indices, errors = np.zeros(0, dtype=np.int64), np.zeros(0)
     for a, b, x in blocks(t):
-        y = np.asarray(p[a:b])
+        x, y = x.astype(np.float64), np.asarray(p[a:b], dtype=np.float64)
         err = np.abs(y - x)
         idx = np.flatnonzero(np.isfinite(err))
         if len(idx) > k:
