@@ -38,8 +38,16 @@ def test_failure_retains_trace_and_restores_hooks(tmp_path):
                for line in (folder / "events.jsonl").read_text().splitlines())
 
 
-@pytest.mark.parametrize("saving", [False, True])
-def test_real_dashboard_first_and_repeated_open(tmp_path, saving):
+@pytest.mark.parametrize("mode, budget, expected_mode, refused", [
+    # Eager load and metrics fit 1 MiB. Memory hints (4096 MB on force parity)
+    # once refused these; they must not reserve the shared budget.
+    ("auto", 2**20, "eager", False),
+    ("saving", 16 * 2**20, "saving", False),
+    # Too small for the replies: the profiler must report the refusals and
+    # still measure the next open.
+    ("auto", 64 * 2**10, "saving", True),
+])
+def test_real_dashboard_first_and_repeated_open(tmp_path, mode, budget, expected_mode, refused):
     source = tmp_path / "dashboard.extxyz"
     with source.open("w") as f:
         for i in range(120):
@@ -51,18 +59,13 @@ def test_real_dashboard_first_and_repeated_open(tmp_path, saving):
                         f"{.1+delta} {.2+delta} {.3+delta}\n")
     original = source.read_bytes()
     env = os.environ.copy()
-    # Exercise streaming with a small shared budget confined to the child.
-    if saving:
-        env["FFAST_MEMORY_BYTES"] = str(16 * 2**20)
-    else:
-        # Reproduce the eager force-scatter admission failure deterministically:
-        # the profiler must report refusals and still measure the next open.
-        env["FFAST_MEMORY_BYTES"] = str(2**20)
+    # A small shared budget confined to the child.
+    env["FFAST_MEMORY_BYTES"] = str(budget)
     output = tmp_path / "profile"
     completed = subprocess.run([
         sys.executable, "-m", "ffast.profiling", str(source),
         "--output", str(output), "--interval", "0.02", "--timeout", "90",
-        "--memory-mode", "saving" if saving else "auto"],
+        "--memory-mode", mode],
         env=env, capture_output=True, text=True, timeout=120)
     if completed.returncode:
         logs = "\n".join(p.read_text() for p in output.glob("*.log"))
@@ -76,21 +79,21 @@ def test_real_dashboard_first_and_repeated_open(tmp_path, saving):
         events = [json.loads(s) for s in (folder / "events.jsonl").read_text().splitlines()]
         phases = {e["phase"]: e for e in events if e.get("name", "").startswith("workload.")}
         assert phases["load"]["frames"] == 120
-        assert phases["load"]["memory_mode"] == ("saving" if saving else "eager")
+        assert phases["load"]["memory_mode"] == expected_mode
         for name in ("basic_errors", "basic_errors_cached"):
             assert phases[name]["reply_count"] == 14
             assert phases[name]["dashboard_ok"] == (not phases[name]["errors"])
-            if saving:
-                assert phases[name]["errors"] == []
-            else:
+            if refused:
                 assert not phases[name]["dashboard_ok"]
-                assert any("4096.0 MiB" in e for e in phases[name]["errors"])
-        if saving:
+                assert any("MiB of working memory" in e for e in phases[name]["errors"])
+            else:
+                assert phases[name]["errors"] == []
+        if mode == "saving":
             assert any(e.get("streamed") for e in events)
             assert any(e.get("name", "").endswith("MemoryGate.reserve") for e in events)
     assert (output / "report.md").is_file()
     from ffast.profiling_workload import check_targets
-    assert check_targets(output, 60)["passed"] is saving
+    assert check_targets(output, 60)["passed"] is not refused
     assert not check_targets(output, 1e-9)["passed"]
 
 
