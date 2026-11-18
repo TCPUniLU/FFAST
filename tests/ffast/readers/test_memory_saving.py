@@ -820,8 +820,11 @@ def test_cancelled_pipeline_does_not_publish_partial_metadata(tmp_path, small_bu
         IndexedStore(XyzReader, path, XyzReader(path).contents(), [], [], [], [],
                      workers=1, scan_source=True, progress=progress)
     assert frame_index.load_cached(path) is None
-    assert not list((tmp_path / "parsed" / "batches").glob("*.npz"))
-    assert not list((tmp_path / "parsed" / "batches").glob("*.json"))
+    folder = tmp_path / "parsed" / "batches"
+    # Committed windows stay (ADR 0107); no manifest, no half-written file.
+    assert not list(folder.glob("*.json"))
+    assert not list(folder.glob("*.tmp"))
+    assert all(p.name.count("-") == 2 for p in folder.glob("*.npz"))
 
 
 def test_missing_and_mixed_integer_energies_preserve_fingerprint(tmp_path):

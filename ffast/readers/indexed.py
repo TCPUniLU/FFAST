@@ -16,7 +16,6 @@ import shutil
 import struct
 import tempfile
 import threading
-import uuid
 import weakref
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -40,8 +39,8 @@ _live_stores = weakref.WeakSet()
 
 def _protected(path, owner):
     """True if ``path`` belongs to another store that is open right now. The
-    store that is saving (``owner``) may still trim its own files. Identities
-    are read at eviction time because a scan changes a store's identity."""
+    store that is saving (``owner``) may still trim its own files. The files
+    of every open identity are named by it, scan or no scan (ADR 0107)."""
     name = Path(path).name
     return any(s is not owner and name.startswith(s.identity)
                for s in list(_live_stores))
@@ -165,6 +164,7 @@ class IndexedStore:
         use_cache=True,
         scan_source=False,
         require_manifest=False,
+        full=False,
     ):
         from ffast.io import frame_cache
         from ffast.loaders.ase import _sample_indices
@@ -190,7 +190,11 @@ class IndexedStore:
             SCHEME,
         )
         h = hashlib.sha256(repr(identity).encode())
-        h.update(self.frames)
+        # A full, unsampled load is named by the file alone ("all"), so a scan
+        # can name its cache before it knows its frames (ADR 0107). Any other
+        # selection is named by its frame list.
+        full = full or scan_source
+        h.update(b"all" if full else self.frames)
         self.identity = h.hexdigest()
         _live_stores.add(self)
         self.info = {}
@@ -259,8 +263,9 @@ class IndexedStore:
         from ffast.metrics import stop
         from ffast.loaders.ase import _sample_indices
 
-        self.identity += "-" + uuid.uuid4().hex
-        temporary_identity = self.identity
+        # The cache is named from the start (ADR 0107): batches are written
+        # under their final names, so a scan that stops leaves usable files.
+        lock = self._lock_scan()
         self.ranges = []
         # A scan projects the cache size from bytes (ADR 0106). The disk
         # allowance is read at the first save, and the kept level only falls.
@@ -307,14 +312,6 @@ class IndexedStore:
             self.check_source()
             if not len(self.counts):
                 raise ReaderError(f"{os.path.basename(self.path)} has no frames")
-            h = hashlib.sha256(repr((1, self.reader.name,
-                getattr(self.reader, "cache_version", 1), self.path, self.state, SCHEME)).encode())
-            h.update(self.frames)
-            self.identity = h.hexdigest()
-            # Publish the parsed windows under the final selection identity.
-            if self.use_cache and self.folder.exists():
-                for old in self.folder.glob(temporary_identity + "-*.npz"):
-                    os.replace(old, old.with_name(old.name.replace(temporary_identity, self.identity, 1)))
             for info in self.info.values():
                 info["digest"] = info["hashes"][info["dtype"].str].hexdigest()
                 info["float_digest"] = info["hashes"][np.dtype(np.float64).str].hexdigest()
@@ -340,9 +337,49 @@ class IndexedStore:
             if progress:
                 progress(len(self.counts), len(self.counts))
         finally:
+            # Only half-written files go; committed batches stay (ADR 0107).
             if self.folder.exists():
-                for path in self.folder.glob(temporary_identity + "-*.npz"):
+                for path in self.folder.glob(self.identity + "-*.tmp"):
                     path.unlink(missing_ok=True)
+            self._unlock_scan(lock)
+
+    def _lock_scan(self):
+        """Take this identity's scan lock, or turn the disk cache off for this
+        load when another scan holds it: then this load reads without writing
+        batches. None when there is nothing to lock."""
+        if not (self.use_cache and budget().parsed_limit):
+            return None
+        try:
+            import fcntl
+        except ImportError:      # no flock here; FFAST targets macOS and Linux
+            return None
+        path = self.folder / f"{self.identity}.lock"
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            handle = open(path, "a+b")
+        except OSError:
+            return None          # the cache folder is not writable: _save copes
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # The holder deletes the file when it is done: a lock taken on a
+            # file that was just deleted guards nothing.
+            if os.fstat(handle.fileno()).st_ino != os.stat(path).st_ino:
+                raise BlockingIOError
+        except OSError:
+            handle.close()
+            log.info("%s is being scanned by another load; this one will not write cache files",
+                     os.path.basename(self.path))
+            self.use_cache = False
+            return None
+        return handle
+
+    def _unlock_scan(self, handle):
+        if handle is None:
+            return
+        try:
+            Path(handle.name).unlink(missing_ok=True)
+        finally:
+            handle.close()
 
     def _observe_elements(self, part, a, b):
         if self.first_numbers is None:
@@ -498,9 +535,12 @@ class IndexedStore:
                         candidate.unlink(missing_ok=True)
                 if used - old + len(data) > limit:
                     return
-                fd, temp = tempfile.mkstemp(dir=self.folder, suffix=".tmp")
+                fd, temp = tempfile.mkstemp(dir=self.folder, prefix=f"{self.identity}-",
+                                            suffix=".tmp")
                 with os.fdopen(fd, "w") as f:
                     f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
                 os.replace(temp, destination)
         except OSError:
             if temp:
@@ -696,9 +736,15 @@ class IndexedStore:
                         old.unlink(missing_ok=True)
                     if legacy + used + size > limit:
                         return
-                    fd, temp = tempfile.mkstemp(dir=self.folder, suffix=".tmp")
+                    # Written, flushed to disk, then renamed: a crash leaves a
+                    # whole batch or none. The temporary name carries the
+                    # identity so a stopped scan removes only its own.
+                    fd, temp = tempfile.mkstemp(dir=self.folder, prefix=f"{self.identity}-",
+                                                suffix=".tmp")
                     with os.fdopen(fd, "wb") as f:
                         np.savez(f, **part)
+                        f.flush()
+                        os.fsync(f.fileno())
                     os.replace(temp, self._cache_path(a, b))
         except OSError as exc:
             log.debug(

@@ -426,7 +426,7 @@ def _read_one_pass(reader_class, path, contents, progress, workers, use_cache):
                 store = IndexedStore(reader_class, path, contents, list(range(n)), table[:-1], table[1:],
                                      counts,
                                      progress=progress, workers=workers, use_cache=use_cache,
-                                     require_manifest=True)
+                                     require_manifest=True, full=True)
                 return IndexedArrays(store), contents, list(range(n)), n
             except NoManifest:
                 pass
@@ -520,7 +520,8 @@ def _read_saving(reader_class, path, contents, frames, n_file, starts, counts, s
                 name, f"{len(frames):,}", budget().limit / 2**20)
     store = IndexedStore(reader_class, path, contents, frames, starts[index],
                          starts[index + 1], counts[index], progress=progress,
-                         workers=workers, use_cache=use_cache)
+                         workers=workers, use_cache=use_cache,
+                         full=select is None and int(stride or 0) <= 1)
     return IndexedArrays(store), contents, frames, n_file
 
 
