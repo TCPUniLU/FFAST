@@ -1241,31 +1241,12 @@ def test_a_column_left_out_of_a_one_pass_cache_is_read_from_the_source(
 # ── cached batches are read through short-lived memory maps (ADR 0106) ──────
 
 
-@pytest.fixture
-def maps(monkeypatch):
-    """Every map the cache reader opens, to check that each one was closed."""
-    import mmap as mmap_module
-
-    from ffast.readers import indexed
-
-    opened = []
-    real = mmap_module.mmap
-
-    def tracking(*args, **kwargs):
-        window = real(*args, **kwargs)
-        opened.append(window)
-        return window
-
-    monkeypatch.setattr(indexed.mmap, "mmap", tracking)
-    return opened
-
-
 def _all_columns(store):
     return {key: np.asarray(store.column(key)[:]) for key in store.info}
 
 
-def test_mapped_reads_equal_the_source_values_across_batches(
-    tmp_path, small_budget, monkeypatch, maps
+def test_cache_reads_equal_the_source_values_across_batches(
+    tmp_path, small_budget, monkeypatch
 ):
     path = write_xyz(tmp_path / "mapped.xyz", n=3000)
     _, store = _scan_store(tmp_path, small_budget, monkeypatch, 64 * 2**20, path)
@@ -1287,11 +1268,10 @@ def test_mapped_reads_equal_the_source_values_across_batches(
     np.testing.assert_array_equal(
         store.column("forces:forces")[(boundary - 2) * 40:(boundary + 2) * 40],
         np.asarray(expected.F_flat)[(boundary - 2) * 40:(boundary + 2) * 40])
-    assert maps and all(window.closed for window in maps)
 
 
-def test_mapped_reads_with_omitted_columns_equal_the_source(
-    tmp_path, small_budget, monkeypatch, maps
+def test_cache_reads_with_omitted_columns_equal_the_source(
+    tmp_path, small_budget, monkeypatch
 ):
     path = write_xyz(tmp_path / "omitted.xyz", n=3000)
     size = Path(path).stat().st_size
@@ -1301,11 +1281,10 @@ def test_mapped_reads_with_omitted_columns_equal_the_source(
     got = _all_columns(store)                # positions come from the source
     np.testing.assert_array_equal(got["positions"], np.asarray(expected.R_flat))
     np.testing.assert_array_equal(got["forces:forces"], np.asarray(expected.F_flat))
-    assert all(window.closed for window in maps)
 
 
 def test_reading_a_whole_dataset_from_disk_leaves_the_ram_cache_empty(
-    tmp_path, small_budget, monkeypatch, maps
+    tmp_path, small_budget, monkeypatch
 ):
     path = write_xyz(tmp_path / "ram.xyz", n=3000)
     _, store = _scan_store(tmp_path, small_budget, monkeypatch, 64 * 2**20, path)
@@ -1327,7 +1306,7 @@ def test_a_window_parsed_from_the_source_is_still_kept_in_ram(
 
 
 def test_a_batch_deleted_after_a_read_falls_back_to_the_source(
-    tmp_path, small_budget, monkeypatch, maps
+    tmp_path, small_budget, monkeypatch
 ):
     path = write_xyz(tmp_path / "deleted.xyz", n=3000)
     _, store = _scan_store(tmp_path, small_budget, monkeypatch, 64 * 2**20, path)
@@ -1342,8 +1321,8 @@ def test_a_batch_deleted_after_a_read_falls_back_to_the_source(
     np.testing.assert_array_equal(again, np.asarray(expected.R_flat))
 
 
-def test_no_map_or_file_stays_open_after_cache_reads(
-    tmp_path, small_budget, monkeypatch, maps
+def test_no_file_stays_open_after_cache_reads(
+    tmp_path, small_budget, monkeypatch
 ):
     import warnings
 
@@ -1355,6 +1334,5 @@ def test_no_map_or_file_stays_open_after_cache_reads(
         for a, b in store.ranges:
             store._part(a, b)
         gc.collect()
-    assert maps and all(window.closed for window in maps)
     for a, b in store.ranges:                # nothing holds a batch file
         store._cache_path(a, b).unlink()

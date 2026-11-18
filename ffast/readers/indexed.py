@@ -11,7 +11,6 @@ import contextvars
 import hashlib
 import json
 import logging
-import mmap
 import os
 import shutil
 import struct
@@ -91,25 +90,21 @@ def file_state(path):
     return s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns
 
 
-def _read_mapped(f, offset, nbytes, out):
-    """Copy ``nbytes`` of the file at ``offset`` into the writable uint8 array
-    ``out``, through a page-aligned map that is closed before returning. The
-    operating system is asked to fetch the range ahead where it can be."""
+def _read_into(f, offset, nbytes, out):
+    """Read ``nbytes`` of the file at ``offset`` straight into the writable
+    uint8 array ``out``: one copy, no temporary buffer. A memory map per read
+    made Basic Errors on a 10 GB file 2.6x slower: threads opening and closing
+    maps at the same time wait on each other (ADR 0106)."""
     if nbytes == 0:
         return
-    aligned = offset - offset % mmap.ALLOCATIONGRANULARITY
-    delta = offset - aligned
-    with mmap.mmap(f.fileno(), delta + nbytes, offset=aligned, access=mmap.ACCESS_READ) as window:
-        advise = getattr(window, "madvise", None)
-        will_need = getattr(mmap, "MADV_WILLNEED", None)
-        if advise is not None and will_need is not None:
-            try:
-                advise(will_need)
-            except OSError:
-                pass
-        view = np.frombuffer(window, dtype=np.uint8, count=nbytes, offset=delta)
-        out[:] = view
-        del view                       # the map cannot close while a view exists
+    f.seek(offset)
+    view = memoryview(out)
+    done = 0
+    while done < nbytes:
+        got = f.readinto(view[done:])
+        if not got:
+            raise EOFError("A cached batch ends early")
+        done += got
 
 
 def _member_rows(archive, f, key, start, stop):
@@ -134,7 +129,7 @@ def _member_rows(archive, f, key, start, stop):
         return None
     width = int(np.prod(shape[1:])) * dtype.itemsize
     out = np.empty((stop - start, *shape[1:]), dtype=dtype)
-    _read_mapped(f, f.tell() + start * width, (stop - start) * width,
+    _read_into(f, f.tell() + start * width, (stop - start) * width,
                  out.reshape(-1).view(np.uint8))
     return out
 
@@ -545,9 +540,9 @@ class IndexedStore:
         """Read only the requested rows of an uncompressed numpy zip member.
 
         np.savez uses ZIP_STORED. Its members are ordinary .npy files; seek
-        past the ZIP and numpy headers, then map just the selected bytes for
-        a moment and copy them out (ADR 0106). The copy is a normal array: no
-        view of the map outlives this call, and the map is never kept open.
+        past the ZIP and numpy headers, then read just the selected bytes into
+        a new array (ADR 0106). The operating system's file cache keeps recent
+        reads in RAM; FFAST keeps no copy of its own.
         """
         if not self.use_cache:
             return None
@@ -580,9 +575,9 @@ class IndexedStore:
             return None
 
     def _cached_batch(self, a, b):
-        """Every column of one cached window, each read through a short-lived
-        map. None when the window omits a column; raises when the file is
-        missing or damaged."""
+        """Every column of one cached window, read in place from the file.
+        None when the window omits a column; raises when the file is missing
+        or damaged."""
         path = self._cache_path(a, b)
         with zipfile.ZipFile(path) as archive, open(path, "rb") as f:
             names = archive.namelist()

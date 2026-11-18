@@ -77,7 +77,7 @@ down by older commits and varies again: `run` warns when that happens, and
 `--memory-bytes 0` lets FFAST choose, to time its default behaviour.
 
 Peak memory: cached batches are read through the operating system's file cache and
-do not appear in RSS (ADR 0106). Peak RSS of a candidate with memory-mapped reads is
+do not appear in RSS (ADR 0106). Peak RSS of a candidate built on ADR 0106 is
 therefore not comparable with a baseline that held the cache in its own RAM.
 
 ## Caveats
