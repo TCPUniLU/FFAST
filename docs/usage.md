@@ -150,6 +150,13 @@ in the shared RAM budget. If disk space cannot hold all parsed fields, the
 cache keeps per-frame values, cell and species first, then forces, then
 positions; anything left out is read from the source file. Saved batch boundaries stay valid when available RAM changes.
 
+Basic Errors shares a batched force-summary pass between compatible MAE/RMSE,
+per-structure errors and outlier requests. Force parity counts use a second
+pass; timelines and distributions reuse the saved per-structure errors.
+Up to four batches can read and calculate concurrently, reduced when CPU or
+RAM headroom is smaller. Results are merged in source order.
+Several requested results can therefore appear in Tasks while sharing work.
+
 Built-in analyses, prediction batches and XYZ export process bounded batches.
 Large results can spill to disk. An operation that cannot fit its working data
 or result is refused while the dataset stays open. External metrics and model

@@ -141,6 +141,7 @@ things came up.
 - [0101](0101-the-cluster-offers-to-install-the-fast-reader.md) A cluster offers to install the optional fast reader before its first relevant file load; one offer and install across windows, progress and Python fallback, only in FFAST-provisioned environments (accepted, built)
 - [0102](0102-large-datasets-have-a-memory-saving-mode.md) Large datasets have a memory-saving mode: shared RAM budget, optional parsed disk cache, batch processing, and separate laptop and Slurm resource policies (accepted, built; cluster benchmarking pending)
 - [0103](0103-large-xyz-files-are-indexed-beside-parsing.md) Large XYZ files are indexed beside parsing; parallel hashing, retained scalar columns and stable cache partitions remove repeated work within the existing resource limits (accepted, built)
+- [0104](0104-related-force-metrics-share-batched-passes.md) Related force metrics share a summary pass and parity-binning pass, with bounded result storage and cancellation shared across consumers (accepted, built)
 
 ## Format
 

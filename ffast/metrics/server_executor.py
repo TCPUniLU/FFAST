@@ -74,6 +74,8 @@ class ServerExecutor(MetricExecutor):
         # must still queue when several dashboards request scans together.
         self._batch_gate = MemoryGate(available=self._batch_headroom, share=0.5)
         self._colour_cache = MetricCache(max_bytes=128 * 1024, spill_max_bytes=0)
+        from ffast.metrics.force_scan import ForceScans
+        self._force_scans = ForceScans(self._batch_work)
 
     @staticmethod
     def _batch_headroom():
@@ -87,7 +89,8 @@ class ServerExecutor(MetricExecutor):
     def _batch_work(self, stopped, *, blocks=4):
         from ffast.io.budget import budget
 
-        # Arithmetic workspace plus source/headroom slots.
+        # Arithmetic workspace plus source/headroom slots. The shared force
+        # producer reserves more blocks once; its waiting consumers reserve none.
         reservation = self._batch_gate.reserve(
             (blocks + 2) * budget().block_bytes, stopped
         )
@@ -127,14 +130,26 @@ class ServerExecutor(MetricExecutor):
             self._workers().start()
 
     def shutdown(self) -> None:
+        self._force_scans.forget()
         if self._workers_executor is not None:
             self._workers_executor.shutdown()
 
     def _step(self, id, schema, fn, kwargs, compute_params, parameters, stopped=lambda: False,
-              *, defer_result=False):
+              *, defer_result=False, force_scan=None):
         """Transport: one step here, or in a worker when ``fn`` is outside code."""
         outside = self._outside(fn)
         from ffast.metrics.colouring import deferring_results
+        if force_scan is not None and not outside and not deferring_results():
+            from ffast.metrics.force_scan import NOT_HANDLED
+            try:
+                shared = force_scan.select(id, fn)
+                if shared is not NOT_HANDLED:
+                    return shared
+            except (NotEnoughMemory, MemoryError, stop.Stopped) as exc:
+                return MetricFailure(metric_id=id, traceback=str(exc) or stop.STOPPED,
+                                     parameters=parameters, kind="temporary")
+            except Exception:
+                return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters)
         if deferring_results() and not outside:
             # Even RAM-backed datasets should calculate colours a batch at
             # a time. Offsets remain small indexing metadata.
@@ -209,19 +224,24 @@ class ServerExecutor(MetricExecutor):
             key_out: dict | None = None) -> MetricResult | MetricFailure:
         plan = build_execution_plan(self._registry, id, parameters, source)
         final_key = {} if key_out is None else key_out
-        results = run_plan(
-            plan,
-            self._registry,
-            self._cache,
-            lambda mid, schema, fn, kwargs, cparams: self._step(
-                mid, schema, fn, kwargs, cparams, parameters, source.stopped,
-                defer_result=mid not in plan.root_ids,
-            ),
-            stopped=source.stopped,
-            key_out=final_key,
-            uses=getattr(source, "uses", frozenset)(),
-            stream_intermediates=True,
-        )
+        shared = self._force_scans.acquire(plan, source, self._registry)
+        try:
+            results = run_plan(
+                plan,
+                self._registry,
+                self._cache,
+                lambda mid, schema, fn, kwargs, cparams: self._step(
+                    mid, schema, fn, kwargs, cparams, parameters, source.stopped,
+                    defer_result=mid not in plan.root_ids, force_scan=shared,
+                ),
+                stopped=source.stopped,
+                key_out=final_key,
+                uses=getattr(source, "uses", frozenset)(),
+                stream_intermediates=True,
+            )
+        finally:
+            if shared is not None:
+                shared.close()
         result = results[id]
         # A dependency cached as a virtual array may later be requested as a
         # root. Admit its complete output then, keeping the same size checks.
@@ -348,6 +368,7 @@ class ServerExecutor(MetricExecutor):
 
     def forget_objects(self, fingerprints):
         fingerprints = tuple(fingerprints)
+        self._force_scans.forget(fingerprints)
         main = super().forget_objects(fingerprints)
         colours = self._colour_cache.forget_objects(fingerprints)
         return {key: main[key] + colours[key] for key in main}

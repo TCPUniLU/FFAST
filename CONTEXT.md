@@ -301,6 +301,13 @@ atom colouring, a subset following a plot's zoom, and Try's references to
 saved metrics all ask it. A metric result is the answer; the store is where
 answers are asked for.
 
+### Shared force summary
+
+Related statistics for the same reference/prediction pair: dataset and
+per-structure force errors, worst components and the bounds of the parity plot.
+Several metric results can share this summary while keeping their own
+definitions and output shapes.
+
 ### Thinned view
 
 The points of a large metric result that a plot can show at its size: in each
