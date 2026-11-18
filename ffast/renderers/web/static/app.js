@@ -72,6 +72,8 @@ import { plotTheme } from './theme.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 import { pageCodeFingerprint, serverCodeNotice } from './code_fingerprint.js';
 
+const LOCAL_LAUNCH_ENDED = 'This local FFAST session ended. Open the latest link from the terminal.';
+
 /** What a tab in Edit mode locks (see _syncEditLock): all that is not the layout. The
  * dataset rail, the pick tools and the 3D Settings sidebar, the Metrics drawer,
  * Screen / Journal and Density, every tab's controls row (data selector, Pause, ...) and
@@ -350,6 +352,7 @@ export class FFastApp {
     this._initMetricsDrawer();
     this._initPickTools();
     this._initTabs();
+    window.ffastStartup?.('interface');
     this._applyUrlParams();
   }
 
@@ -659,7 +662,9 @@ export class FFastApp {
     // A dropped connection is retried by itself (ADR 0097 decision 3).
     this._reconnector = new Reconnector({
       tryConnect: () => this._reconnect(),
-      onWait: (s) => this._showConnLost(`Connection lost. Trying again in ${s} s.`),
+      onWait: (s) => this._showConnLost(this._waitingForLauncher
+        ? `Waiting for the local FFAST launcher. Trying again in ${s} s.`
+        : `Connection lost. Trying again in ${s} s.`),
       onTrying: () => this._showConnLost('Connection lost. Reconnecting…'),
     });
     document.getElementById('conn-lost-now').addEventListener('click', () => this._reconnector.now());
@@ -1859,13 +1864,22 @@ export class FFastApp {
     }
     // A live cluster connection wins over the URL's local server, so a reload
     // goes back to the cluster (web parity plan 2026-10-29).
-    const fallback = () => (port ? this._connect() : this._openConnDialog());
+    const fallback = () => {
+      window.ffastStartup?.('target');
+      return port ? this._connect() : this._openConnDialog();
+    };
     if (!this._clusterClient) { fallback(); return; }
     this._clusterClient.state().then((s) => {
       this._clusterReady = true;
-      if (s.status?.state === 'connected') this._useCluster(s.status);
+      if (s.status?.state === 'connected') {
+        window.ffastStartup?.('target');
+        this._useCluster(s.status);
+      }
       else fallback();
-    }).catch(fallback);
+    }).catch((err) => {
+      if (err.status === 403) this._openConnDialog(LOCAL_LAUNCH_ENDED);
+      else fallback();
+    });
   }
 
   // ── connection dialog (ADR 0055) ────────────────────────────────────────
@@ -2105,6 +2119,7 @@ export class FFastApp {
     if (conn !== this._conn) return;
     console.warn('FFAST: connection lost');
     this._lostOnCluster = !!this._clusterServerUrl && conn._url === this._clusterServerUrl;
+    this._lostOnLocal = this._clusterReady && conn._url === this._localServerUrl();
     this._disconnect({ lost: true });
     this._setStatus('Connection lost', 'error');
     this._reconnector.start();
@@ -2113,6 +2128,27 @@ export class FFastApp {
   /** One retry. On a cluster, a tunnel the launcher no longer holds is not
    * retried: the job or the tunnel is gone, and the Cluster dialog says why. */
   async _reconnect() {
+    if (this._lostOnLocal && this._clusterClient) {
+      // Firefox queues WebSocket opens by IP, even across ports. An old
+      // tab must not keep filling that queue after its launcher exits.
+      try {
+        await this._clusterClient.state();
+        if (!this._reconnector.active) return false;
+        this._waitingForLauncher = false;
+      } catch (err) {
+        if (!this._reconnector.active) return false;
+        if (err.status === 403) {
+          this._stopReconnecting();
+          this._lostOnLocal = false;
+          this._showConnLost(LOCAL_LAUNCH_ENDED, { button: false });
+        } else {
+          // A temporary HTTP failure may recover; poll the launcher first,
+          // leaving the WebSocket queue free for other local sessions.
+          this._waitingForLauncher = true;
+        }
+        return false;
+      }
+    }
     if (this._lostOnCluster && this._clusterClient) {
       let state = null;
       try { state = (await this._clusterClient.state()).status?.state; } catch (_) { /* launcher gone */ }
@@ -2146,6 +2182,7 @@ export class FFastApp {
 
   /** The user chose: no more retries, no banner. */
   _stopReconnecting() {
+    this._waitingForLauncher = false;
     this._reconnector?.stop();
     this._hideConnLost();
   }

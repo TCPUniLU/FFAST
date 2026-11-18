@@ -16,6 +16,7 @@
 
 import { FFastApp } from './app.js';
 
+window.ffastStartup?.('modules');
 const app = new FFastApp();
 
 // Expose the live app for debugging and the Playwright runtime tests (which

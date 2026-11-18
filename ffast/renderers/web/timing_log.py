@@ -9,6 +9,8 @@ the first lines arrive. The newest ten are kept.
 from __future__ import annotations
 
 import datetime
+import json
+import math
 import threading
 from pathlib import Path
 
@@ -20,6 +22,52 @@ MAX_LINES = 5000
 MAX_LINE = 2000
 
 
+def startup_line(value) -> str | None:
+    """Only startup phases and aggregate durations may reach the terminal."""
+    if not isinstance(value, dict):
+        return None
+    if value.get("phase") not in ("socket", "open", "failed"):
+        return None
+    page = value.get("page")
+    if (
+        not isinstance(page, str)
+        or not 1 <= len(page) <= 64
+        or not all(c.isascii() and (c.isalnum() or c == "-") for c in page)
+    ):
+        return None
+    if value.get("browser") not in ("Firefox", "other"):
+        return None
+    fields = {
+        "event": "page_startup",
+        "page": page,
+        "phase": value["phase"],
+        "browser": value["browser"],
+    }
+    for key in (
+        "elapsed_ms",
+        "document_ms",
+        "scripts_ms",
+        "assets_ready_ms",
+        "interface_ms",
+        "target_ms",
+        "socket_ms",
+        "resources",
+        "ws_port",
+    ):
+        number = value.get(key)
+        if number is None and key != "elapsed_ms":
+            fields[key] = None
+        elif (
+            type(number) not in (int, float)
+            or not math.isfinite(number)
+            or not 0 <= number <= 86400000
+        ):
+            return None
+        else:
+            fields[key] = round(number)
+    return json.dumps(fields)
+
+
 class TimingLogFile:
     def __init__(self, directory: Path | None = None) -> None:
         self._dir = Path(directory) if directory else default_dir()
@@ -28,7 +76,9 @@ class TimingLogFile:
 
     def write(self, lines) -> bool:
         """Append ``lines`` (a list of strings). False when they are not one."""
-        if not isinstance(lines, list) or not all(isinstance(x, str) for x in lines):
+        if not isinstance(lines, list) or not all(
+            isinstance(x, str) for x in lines
+        ):
             return False
         lines = [x[:MAX_LINE].replace("\r", " ") for x in lines[:MAX_LINES]]
         with self._lock:

@@ -108,7 +108,17 @@ class _SilentStaticHandler(http.server.SimpleHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             return self._send_json(400, {"error": "Not JSON"})
-        if not isinstance(body, dict) or not log.write(body.get("lines")):
+        if not isinstance(body, dict):
+            return self._send_json(400, {"error": "Expected {lines: [str]}"})
+        if "startup" in body:
+            from ffast.renderers.web.timing_log import startup_line
+
+            line = startup_line(body["startup"])
+            if line is None:
+                return self._send_json(400, {"error": "Invalid startup timing"})
+            log.write([line])
+            logger.info("%s", line)
+        elif not log.write(body.get("lines")):
             return self._send_json(400, {"error": "Expected {lines: [str]}"})
         self._send_json(200, {})
 
@@ -120,6 +130,8 @@ class _SilentStaticHandler(http.server.SimpleHTTPRequestHandler):
         self.send_error(404)
 
     def do_GET(self):
+        if self.path.split("?", 1)[0] == "/" and getattr(self.server, "cluster_secret", None):
+            logger.info('{"event": "page_startup", "phase": "document_requested"}')
         if self.path.startswith("/cluster/"):
             return self._cluster_request("GET")
         # Which FFAST code served this page, so the page can warn when the

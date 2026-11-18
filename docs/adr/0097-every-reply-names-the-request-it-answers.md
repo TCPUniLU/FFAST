@@ -95,6 +95,14 @@ typed units on the dataset, says "loaded") once it has both.
   and the banner points to the Cluster dialog. The page does not ask the
   launcher while connected: a dying tunnel closes the page's socket at once,
   and a stalled one looks alive to the launcher too.
+- A retry to the launcher's own local server also checks its launcher first.
+  If a new launcher rejects the old launch secret, the tab stops and asks
+  for the latest terminal link. While its launcher is unreachable it polls
+  over HTTP without opening WebSockets. Firefox serializes pending WebSocket
+  opens by IP across ports: an old tab retrying a stopped server can delay a
+  fresh local launch by 20 seconds. An expired launch link likewise does not
+  start an automatic WebSocket attempt. Manual server connections retain the
+  ordinary reconnect behaviour.
 
 ### 4. Two ideas kept from the desktop
 

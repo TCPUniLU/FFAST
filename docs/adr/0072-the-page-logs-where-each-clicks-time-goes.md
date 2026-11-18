@@ -77,3 +77,27 @@ and from the outside that looks like a slow network.
   message. "page busy" shows how much of that there was.
 - A cluster running older FFAST code sends no TIMING messages. The log then
   shows only the page's own times and says so on the "connected" line.
+
+Startup also needs measurements before the connection exists. The launcher
+logs when Firefox or another browser requests the document. A small classic
+script, loaded before the large libraries and module graph, then measures
+script loading/evaluation, interface construction, choosing the local or
+cluster target, and socket opening. Two `page_startup` records (attempt and
+open/failure), correlated by page id, go to the same authenticated timing
+endpoint and the terminal. They contain only phases and aggregate timings.
+The page includes the existing `lines` payload too, so an already running
+older launcher can retain these measurements after a page reload.
+
+These timings were added for a reported 20-second pause in an already visible
+Firefox page. The affected page reached its socket attempt in 492 ms, then
+spent 20,415 ms waiting for the socket before failing. A controlled check in
+the installed Firefox reproduced a 20,019 ms delay: one stalled localhost
+WebSocket opening blocked a second opening on a different port. Mozilla's
+[WebSocket admission manager](https://github.com/mozilla-firefox/firefox/blob/main/netwerk/protocol/websocket/WebSocketChannel.cpp)
+serializes pending opens by IP address. Old tabs retrying stopped local
+servers can therefore delay new local sessions. Local retries now check that
+their launcher still exists before opening a socket; a different launch
+secret stops retries, and an unavailable launcher is polled over HTTP instead.
+Expired launch links also avoid automatic socket attempts. Browser tests use
+a controlled clock to check phase attribution, and exercise stale launchers,
+HTTP recovery, ordinary reconnect and expired links against real WebSockets.

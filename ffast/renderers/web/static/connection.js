@@ -47,6 +47,7 @@ export class FFastConnection {
 
   connect() {
     return new Promise((resolve, reject) => {
+      window.ffastStartup?.('socket', this._url);
       const ws = new WebSocket(this._url);
       ws.binaryType = 'arraybuffer';
       this._ws = ws;
@@ -60,10 +61,14 @@ export class FFastConnection {
         if (handshakeDone) this._dispatch(evt.data, now());
         else buf.push(evt.data);
       };
-      ws.onerror = () => { if (!handshakeDone) reject(new Error('WebSocket error')); };
+      ws.onerror = () => {
+        window.ffastStartup?.('failed');
+        if (!handshakeDone) reject(new Error('WebSocket error'));
+      };
       ws.onclose = () => { if (!handshakeDone) reject(new Error('WebSocket closed during handshake')); };
 
       ws.onopen = async () => {
+        window.ffastStartup?.('open');
         try {
           this.role = await this._handshake(buf);
           handshakeDone = true;
