@@ -51,6 +51,28 @@ def available_memory() -> int:
         return 8 * 2**30
 
 
+def total_memory() -> int:
+    """Bytes of RAM in the machine, whatever is using it now. Linux:
+    ``MemTotal``, else psutil, else the page count. Job limits (a cgroup, a
+    Slurm allocation) are not applied here."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return int(psutil.virtual_memory().total)
+    except Exception:
+        pass
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return 16 * 2**30
+
+
 def _read_int(path: str) -> int | None:
     """The number in a cgroup file; None when missing or "max" (no limit)."""
     try:

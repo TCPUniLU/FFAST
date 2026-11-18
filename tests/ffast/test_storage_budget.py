@@ -14,18 +14,55 @@ def test_laptop_and_slurm_defaults_use_different_limits(monkeypatch):
     gib = 2**30
     monkeypatch.delenv("FFAST_MEMORY_BYTES", raising=False)
     monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+    monkeypatch.setattr(resources, "total_memory", lambda: 16 * gib)
     monkeypatch.setattr(resources, "available_memory", lambda: 16 * gib)
     monkeypatch.setattr(resources, "cgroup_headroom", lambda: None)
     monkeypatch.setattr(resources, "slurm_headroom", lambda: None)
     assert resources.Budget().limit == int(16 * gib * 0.80)
-    monkeypatch.setattr(resources, "available_memory", lambda: 2 * gib)
+    monkeypatch.setattr(resources, "total_memory", lambda: 2 * gib)
     assert resources.Budget().limit == int(1.5 * gib)  # preserve 512 MiB headroom
-    monkeypatch.setattr(resources, "available_memory", lambda: 16 * gib)
+    monkeypatch.setattr(resources, "total_memory", lambda: 16 * gib)
     monkeypatch.setattr(resources, "cgroup_headroom", lambda: 8 * gib)
     assert resources.Budget().limit == int(8 * gib * 0.85)
     monkeypatch.setattr(resources, "cgroup_headroom", lambda: 2 * gib)
     assert resources.Budget().limit == int(1.5 * gib)
     assert resources.Budget(ram_bytes=100 * gib).limit == 2 * gib
+
+
+def test_workstation_limit_follows_total_memory_not_free_memory(monkeypatch):
+    gib = 2**30
+    monkeypatch.delenv("FFAST_MEMORY_BYTES", raising=False)
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+    monkeypatch.setattr(resources, "total_memory", lambda: 16 * gib)
+    monkeypatch.setattr(resources, "cgroup_headroom", lambda: None)
+    monkeypatch.setattr(resources, "slurm_headroom", lambda: None)
+    limits = set()
+    for free in (1 * gib, 8 * gib, 15 * gib):
+        monkeypatch.setattr(resources, "available_memory", lambda free=free: free)
+        limits.add(resources.Budget().limit)
+    assert limits == {int(16 * gib * 0.80)}
+
+
+def test_explicit_settings_are_used_as_given_on_a_workstation(monkeypatch):
+    gib = 2**30
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+    monkeypatch.setattr(resources, "total_memory", lambda: 16 * gib)
+    monkeypatch.setattr(resources, "available_memory", lambda: 1 * gib)
+    monkeypatch.setattr(resources, "cgroup_headroom", lambda: None)
+    monkeypatch.setattr(resources, "slurm_headroom", lambda: None)
+    assert resources.Budget(ram_bytes=3 * gib).limit == 3 * gib
+    monkeypatch.setenv("FFAST_MEMORY_BYTES", str(5 * gib))
+    assert resources.Budget().limit == 5 * gib
+
+
+def test_fits_compares_with_the_limit_and_ignores_free_memory(monkeypatch):
+    owner = resources.Budget(ram_bytes=10_000)
+    with owner.reserve(4000):
+        monkeypatch.setattr(resources, "available_memory", lambda: 1)
+        assert owner.fits(6000)
+        assert not owner.fits(6001)
+    assert owner.fits(10_000)
+    assert not owner.fits(10_001)
 
 
 def test_allocations_and_active_work_share_one_limit():
@@ -88,8 +125,8 @@ def test_a_slurm_job_without_a_visible_limit_falls_back_to_free_memory(monkeypat
     monkeypatch.delenv("FFAST_MEMORY_BYTES", raising=False)
     monkeypatch.setattr(shared, "cgroup_headroom", lambda: None)
     monkeypatch.setattr(shared, "slurm_headroom", lambda: None)
-    monkeypatch.setattr(shared, "available_memory", lambda: 10 * 2**30)
+    monkeypatch.setattr(shared, "total_memory", lambda: 10 * 2**30)
     with caplog.at_level("WARNING"):
         owner = shared.Budget()
-    assert owner.limit == 8 * 2**30          # the workstation rule: 80% of free memory
+    assert owner.limit == 8 * 2**30          # the workstation rule: 80% of total memory
     assert "FFAST_MEMORY_BYTES" in caplog.text

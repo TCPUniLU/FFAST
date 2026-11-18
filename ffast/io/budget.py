@@ -18,6 +18,7 @@ from ffast.metrics.resources import (
     available_memory,
     cgroup_headroom,
     slurm_headroom,
+    total_memory,
 )
 
 MiB = 2**20
@@ -41,14 +42,11 @@ def _setting(name, default):
 
 class Budget:
     def __init__(self, ram_bytes=None, parsed_bytes=None, result_bytes=None):
-        free = available_memory()
-        # A workstation shares its RAM with other apps. A constrained cluster
-        # job may use more of its remaining allocation, never the whole node.
+        # The automatic limit must not change with what else is running, or
+        # the same file would load by a different path on each start (ADR 0106).
         job_limit = cgroup_headroom()
         if job_limit is None:
             job_limit = slurm_headroom()
-        if job_limit is not None:
-            free = min(free, job_limit)
         if (
             os.environ.get("SLURM_JOB_ID")
             and job_limit is None
@@ -59,17 +57,24 @@ class Budget:
             # workstation rule instead of refusing to run.
             logging.getLogger("FFAST").warning(
                 "The Slurm memory allocation is not visible; using 80%% of the "
-                "node's free memory. Set FFAST_MEMORY_BYTES or resources.ram_bytes "
+                "node's total memory. Set FFAST_MEMORY_BYTES or resources.ram_bytes "
                 "within the job's allocation if this node is shared."
             )
-        share = 0.85 if job_limit is not None else 0.80
-        automatic = max(MiB, min(int(free * share), free - 512 * MiB))
+        if job_limit is not None:
+            # A constrained cluster job may use most of what is left of its
+            # allocation, never the whole of it.
+            free = min(available_memory(), job_limit)
+            automatic = max(MiB, min(int(free * 0.85), free - 512 * MiB))
+        else:
+            total = total_memory()
+            automatic = max(MiB, min(int(total * 0.80), total - 512 * MiB))
         self.limit = int(
             ram_bytes
             if ram_bytes is not None
             else _setting("FFAST_MEMORY_BYTES", automatic)
         )
-        self.limit = min(self.limit, free)
+        if job_limit is not None:
+            self.limit = min(self.limit, free)
         if self.limit <= 0:
             raise ValueError("FFAST_MEMORY_BYTES must be positive")
         self.parsed_limit = int(
@@ -114,6 +119,13 @@ class Budget:
                 f"FFAST's shared RAM budget is {self.limit / MiB:.1f} MiB "
                 f"({self.used / MiB:.1f} MiB in use). The dataset remains open."
             )
+
+    def fits(self, size):
+        """Whether ``size`` more bytes stay within the limit. Looks at this
+        budget only, never at the memory free right now, so the answer depends
+        on the machine and not on what else is open (ADR 0106)."""
+        with self.lock:
+            return self.used + int(size) <= self.limit
 
     def check(self, size):
         with self.lock:
