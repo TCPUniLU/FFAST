@@ -19,8 +19,10 @@ def _args(tmp_path, **over):
 
 
 @pytest.mark.integration
-def test_one_side_one_repeat_gives_two_completed_rows(tmp_path):
-    assert run_matrix(_args(tmp_path)) == 0
+def test_one_side_one_repeat_gives_two_completed_rows(tmp_path, monkeypatch):
+    # Relative folders: the profiler runs inside the side's folder, not here.
+    monkeypatch.chdir(tmp_path)
+    assert run_matrix(_args(tmp_path, data_dir="data", output="out")) == 0
     got = duckdb.sql(
         f"SELECT scenario, completed, load_s, basic_errors_s, cache_bytes FROM "
         f"read_parquet('{tmp_path}/out/rows/*.parquet') ORDER BY scenario").fetchall()

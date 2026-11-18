@@ -25,8 +25,10 @@ def run_once(side, env, data_file, out_dir, timeout, meta=None):
     ``out_dir`` must not exist yet; the profiler makes it. Its cache folder is
     measured and removed afterwards, everything else stays. Returns ``out_dir``.
     """
-    out_dir = Path(out_dir)
-    command = [sys.executable, "-m", "ffast.profiling", str(data_file),
+    # The profiler runs inside the side's folder, so relative paths must be made absolute here.
+    out_dir = Path(out_dir).resolve()
+    data_file = Path(data_file).resolve()
+    command =[sys.executable, "-m", "ffast.profiling", str(data_file),
                "--output", str(out_dir), "--runs", "2", "--timeout", str(timeout),
                "--energy-key", "energy", "--force-key", "forces",
                "--pred-energy-key", "energy_pred", "--pred-force-key", "forces_pred"]
