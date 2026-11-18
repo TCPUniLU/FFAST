@@ -78,3 +78,18 @@ def test_full_array_and_batch_caches_share_the_parsed_disk_limit(
     batches.mkdir()
     (batches / "one.npz").write_bytes(b"x" * 8000)
     assert frame_cache.max_bytes(tmp_path) == 2000
+
+
+def test_a_slurm_job_without_a_visible_limit_falls_back_to_free_memory(monkeypatch, caplog):
+    """Whole-node jobs (--mem=0) expose no limit; the server must still start."""
+    from ffast.io import budget as shared
+
+    monkeypatch.setenv("SLURM_JOB_ID", "1")
+    monkeypatch.delenv("FFAST_MEMORY_BYTES", raising=False)
+    monkeypatch.setattr(shared, "cgroup_headroom", lambda: None)
+    monkeypatch.setattr(shared, "slurm_headroom", lambda: None)
+    monkeypatch.setattr(shared, "available_memory", lambda: 10 * 2**30)
+    with caplog.at_level("WARNING"):
+        owner = shared.Budget()
+    assert owner.limit == 8 * 2**30          # the workstation rule: 80% of free memory
+    assert "FFAST_MEMORY_BYTES" in caplog.text

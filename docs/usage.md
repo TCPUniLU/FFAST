@@ -184,8 +184,10 @@ Python, model libraries and index metadata also consume process memory.
 The automatic RAM cap is chosen when the budget is created; it does not grow
 when another application exits. New allocations also check current free
 memory, and cached batches can be evicted under pressure.
-Leave extra room for external model workspaces. An unknown Slurm allocation
-requires an explicit RAM setting.
+Leave extra room for external model workspaces. If a Slurm job's allocation
+is not visible (for example `--mem=0` whole-node jobs), FFAST uses 80% of the
+node's free memory and logs a warning; set `FFAST_MEMORY_BYTES` on a shared
+node.
 
 Environment equivalents are `FFAST_MEMORY_BYTES`, `FFAST_PARSED_CACHE_BYTES`
 and `FFAST_RESULT_CACHE_BYTES`; explicit project settings take precedence.

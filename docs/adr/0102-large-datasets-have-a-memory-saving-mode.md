@@ -25,8 +25,9 @@ index, read frames and batches on demand, and bound what stays in RAM.
 - **Different automatic policies for laptops and Slurm.** A workstation admits
   80% of available RAM; a cgroup/Slurm job admits 85% of its remaining
   allocation, never the node's free memory. Both keep at least 512 MiB
-  headroom. Slurm jobs with no visible allocation require an explicit
-  `FFAST_MEMORY_BYTES` or `resources.ram_bytes`.
+  headroom. A Slurm job whose allocation is not visible (e.g. `--mem=0`)
+  falls back to the workstation rule with a warning; `FFAST_MEMORY_BYTES` or
+  `resources.ram_bytes` sets it explicitly.
 - **Optional disk caches with their own budgets.** Parsed batches (uncompressed
   `.npz`) and large results (`.npy`) each default to 20 GiB. Entries are
   published atomically. If a cache cannot be written, the dataset still works

@@ -6,6 +6,7 @@ RSS. External operations must declare/estimate their working set too.
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import weakref
@@ -54,9 +55,12 @@ class Budget:
             and ram_bytes is None
             and "FFAST_MEMORY_BYTES" not in os.environ
         ):
-            raise ValueError(
-                "The Slurm memory allocation is unavailable. Set FFAST_MEMORY_BYTES "
-                "or resources.ram_bytes within the job's allocation."
+            # Whole-node jobs (--mem=0) expose no limit. Start with the
+            # workstation rule instead of refusing to run.
+            logging.getLogger("FFAST").warning(
+                "The Slurm memory allocation is not visible; using 80%% of the "
+                "node's free memory. Set FFAST_MEMORY_BYTES or resources.ram_bytes "
+                "within the job's allocation if this node is shared."
             )
         share = 0.85 if job_limit is not None else 0.80
         automatic = max(MiB, min(int(free * share), free - 512 * MiB))
