@@ -389,18 +389,55 @@ class _Joined:
         self.f += n_frames
 
 
-def can_scan_and_read(reader_class, path, *, stride=0, select=None, memory_mode="auto", **kwargs):
-    """Large, unsampled XYZ files can be indexed beside bounded parsing.
-
-    A valid frame index already on disk takes the ordinary cached path.
-    This is an optional optimization; every other reader keeps its contract.
-    """
+def _one_pass_possible(reader_class, stride, select):
+    """Whether a full, unsampled XYZ load can find frames and parse in one pass."""
     from ffast.io.budget import budget
     return (reader_class.name == "xyz" and select is None and int(stride or 0) <= 1
-            and memory_mode in ("auto", "saving") and budget().limit >= 16 * 2**20
-            and os.path.getsize(path) > 2 * budget().limit
-            and fast_parser_usable() and frame_index._fast_finder() is not None
-            and not frame_index.has_cached_or_running_index(path))
+            and budget().limit >= 16 * 2**20
+            and fast_parser_usable() and frame_index._fast_finder() is not None)
+
+
+def can_scan_and_read(reader_class, path, *, stride=0, select=None, memory_mode="auto", **kwargs):
+    """Whether a load goes straight to the one-pass scan (ADR 0103, 0106).
+
+    In memory-saving mode every full, unsampled XYZ load does, whatever the
+    size, and a frame index already on disk does not change that. In auto mode
+    only a file larger than twice the budget does, so that it skips building a
+    frame index; a smaller one is indexed first to decide. Every other reader
+    keeps its contract.
+    """
+    from ffast.io.budget import budget
+    if memory_mode not in ("auto", "saving") or not _one_pass_possible(reader_class, stride, select):
+        return False
+    return memory_mode == "saving" or os.path.getsize(path) > 2 * budget().limit
+
+
+def _read_one_pass(reader_class, path, contents, progress, workers, use_cache):
+    """``(arrays, contents, frames, n_file_frames)`` from one pass over the
+    file, or None when the fast parser hands it over (NotFast)."""
+    from ffast.readers.indexed import IndexedArrays, IndexedStore, NoManifest
+    with _scan_parse_lock:
+        # A finished scan left a manifest under the same name: open it, do not
+        # scan again. Another load that waited on this lock finds it too.
+        if use_cache and frame_index.has_cached_or_running_index(path):
+            table, counts = get_table(reader_class, path)
+            n = len(counts)
+            try:
+                store = IndexedStore(reader_class, path, contents, list(range(n)), table[:-1], table[1:],
+                                     counts,
+                                     progress=progress, workers=workers, use_cache=use_cache,
+                                     require_manifest=True)
+                return IndexedArrays(store), contents, list(range(n)), n
+            except NoManifest:
+                pass
+        try:
+            store = IndexedStore(reader_class, path, contents, [], [], [], [],
+                                 progress=progress, workers=workers, use_cache=use_cache,
+                                 scan_source=True)
+        except NotFast:
+            # Unusual count syntax keeps the Python scanner's errors.
+            return None
+        return IndexedArrays(store), contents, list(range(len(store.counts))), len(store.counts)
 
 
 def read_level2(reader_class, path, *, stride=0, select=None, progress=None, workers=None,
@@ -411,17 +448,12 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
     name = os.path.basename(path)
     reader = reader_class(path)
     contents = dict(reader.contents() or {})
+    tried_one_pass = False
     if can_scan_and_read(reader_class, path, stride=stride, select=select, memory_mode=memory_mode):
-        from ffast.readers.indexed import IndexedArrays, IndexedStore
-        with _scan_parse_lock:
-            if can_scan_and_read(reader_class, path, stride=stride, select=select, memory_mode=memory_mode):
-                try:
-                    store = IndexedStore(reader_class, path, contents, [], [], [], [],
-                        progress=progress, workers=workers, use_cache=use_cache, scan_source=True)
-                    return IndexedArrays(store), contents, list(range(len(store.counts))), len(store.counts)
-                except NotFast:
-                    # Unusual count syntax keeps the Python scanner's errors.
-                    pass
+        tried_one_pass = True
+        done = _read_one_pass(reader_class, path, contents, progress, workers, use_cache)
+        if done is not None:
+            return done
     starts, counts = get_table(reader_class, path)
     n_file = len(counts)
     if select is not None:
@@ -445,22 +477,59 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
                                   + len(contents.get("frame_fields") or [])))
     if reader_class.name == "xyz":
         owner = budget()
-        try:
-            physical = int(_physical_sizes(starts[index], starts[index + 1]).sum())
-            workspace = min(GROUP_BYTES, max(1024, owner.limit // 8), physical) * 3
-            owner.check(estimate + workspace)
-            fits = True
-        except NotEnoughMemory:
-            fits = False
+        physical = int(_physical_sizes(starts[index], starts[index + 1]).sum())
+        workspace = min(GROUP_BYTES, max(1024, owner.limit // 8), physical) * 3
+        # Compared with the limit only, not with the memory free now, so the
+        # choice depends on the machine and not on what else is open (ADR 0106).
+        fits = owner.fits(estimate + workspace)
         if memory_mode == "saving" or not fits:
-            from ffast.readers.indexed import IndexedArrays, IndexedStore
-            logger.info("Reading %s in memory-saving mode: %s frames, shared RAM limit %.1f MiB",
-                        name, f"{total:,}", owner.limit / 2**20)
-            store = IndexedStore(reader_class, path, contents, frames, starts[index],
-                                 starts[index + 1], kept_counts, progress=progress,
-                                 workers=workers, use_cache=use_cache)
-            return IndexedArrays(store), contents, frames, n_file
+            saved = _read_saving(reader_class, path, contents, frames, n_file, starts, counts,
+                                 stride, select, progress, workers, use_cache, tried_one_pass)
+            if saved is not None:
+                return saved
 
+    try:
+        return _read_full(reader_class, path, contents, frames, n_file, starts, counts,
+                          use_cache, progress, workers, batch, on_handover)
+    except NotEnoughMemory:
+        # Free memory fell short of what the plan needed: start again in
+        # memory-saving mode instead of failing the load.
+        if reader_class.name != "xyz" or memory_mode != "auto":
+            raise
+        saved = _read_saving(reader_class, path, contents, frames, n_file, starts, counts,
+                             stride, select, progress, workers, use_cache, tried_one_pass)
+        if saved is None:
+            raise
+        logger.info("%s: not enough free memory for full arrays; loaded in memory-saving mode", name)
+        return saved
+
+
+def _read_saving(reader_class, path, contents, frames, n_file, starts, counts, stride, select,
+                 progress, workers, use_cache, tried_one_pass):
+    """A memory-saving load of an XYZ file: one pass for a full, unsampled load
+    (ADR 0106), the indexed store for a strided or sampled one."""
+    from ffast.io.budget import budget
+    from ffast.readers.indexed import IndexedArrays, IndexedStore
+    name = os.path.basename(path)
+    if not tried_one_pass and _one_pass_possible(reader_class, stride, select):
+        done = _read_one_pass(reader_class, path, contents, progress, workers, use_cache)
+        if done is not None:
+            return done
+    index = np.asarray(frames, dtype=np.intp)
+    logger.info("Reading %s in memory-saving mode: %s frames, shared RAM limit %.1f MiB",
+                name, f"{len(frames):,}", budget().limit / 2**20)
+    store = IndexedStore(reader_class, path, contents, frames, starts[index],
+                         starts[index + 1], counts[index], progress=progress,
+                         workers=workers, use_cache=use_cache)
+    return IndexedArrays(store), contents, frames, n_file
+
+
+def _read_full(reader_class, path, contents, frames, n_file, starts, counts, use_cache,
+               progress, workers, batch, on_handover):
+    """The kept frames as ordinary arrays held in memory."""
+    from ffast.io.budget import budget
+    name = os.path.basename(path)
+    total = len(frames)
     step = _regular_step(frames)
     if use_cache and step is not None:
         kept = _kept_load(reader_class, path, step)

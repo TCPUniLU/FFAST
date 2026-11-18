@@ -90,6 +90,10 @@ def file_state(path):
     return s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns
 
 
+class NoManifest(Exception):
+    """A store was asked to open from its manifest only, and there is none."""
+
+
 class IndexedArrays(dict):
     """The ordinary reader keys, backed by a shared indexed source."""
 
@@ -115,6 +119,7 @@ class IndexedStore:
         workers=None,
         use_cache=True,
         scan_source=False,
+        require_manifest=False,
     ):
         from ffast.io import frame_cache
         from ffast.loaders.ase import _sample_indices
@@ -163,6 +168,9 @@ class IndexedStore:
             if progress:
                 progress(len(counts), len(counts))
             return
+        if require_manifest:
+            _live_stores.discard(self)
+            raise NoManifest(self.path)
         self._warming = True
         from ffast.readers.text import fast_threads
         with ThreadPoolExecutor(max_workers=min(4, fast_threads())) as pool:

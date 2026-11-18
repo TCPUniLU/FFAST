@@ -707,7 +707,9 @@ def test_bulk_columns_share_canonical_parse_windows(tmp_path, small_budget, monk
     from ffast.readers import text
 
     small_budget.limit = 128 * 2**20
-    ds = dataset(write_xyz(tmp_path / "bulk.xyz", n=5000), memory_mode="saving")
+    # A selection keeps the indexed path, whose windows follow the budget.
+    ds = dataset(write_xyz(tmp_path / "bulk.xyz", n=5000), memory_mode="saving",
+                 select=lambda n: list(range(n)))
     small_budget.cache.clear()
     small_budget.cache_bytes = 0
     original = text._read_fast_arrays
@@ -1024,3 +1026,120 @@ def test_cache_never_evicts_files_of_an_open_dataset(tmp_path, small_budget, mon
     eager = dataset(path)
     np.testing.assert_array_equal(
         np.asarray(store.column("forces:forces")[:]), eager.arrays["forces:forces"])
+
+
+# ── one memory-saving path (ADR 0106) ───────────────────────────────────────
+
+
+@pytest.fixture
+def scan_spy(monkeypatch):
+    """Names the paths a load took: the one-pass scan, or the indexed store."""
+    from ffast.readers import indexed, text
+
+    if not text.fast_parser_usable():
+        pytest.skip("Optional fast parser unavailable")
+    calls = []
+    original = indexed.IndexedStore._scan_source
+
+    def spy(self, progress):
+        calls.append("one-pass")
+        return original(self, progress)
+
+    monkeypatch.setattr(indexed.IndexedStore, "_scan_source", spy)
+    return calls
+
+
+def _caches(monkeypatch, tmp_path):
+    from ffast.io import frame_cache, frame_index
+
+    monkeypatch.setattr(frame_index, "CACHE_DIR", tmp_path / "index")
+    monkeypatch.setattr(frame_cache, "CACHE_DIR", tmp_path / "parsed")
+
+
+def test_saving_mode_takes_the_one_pass_path_for_a_small_file(
+    tmp_path, small_budget, monkeypatch, scan_spy
+):
+    _caches(monkeypatch, tmp_path)
+    small_budget.limit = 64 * 2**20          # the file is far below twice this
+    ds = dataset(write_xyz(tmp_path / "small.xyz", n=300), memory_mode="saving")
+    assert scan_spy == ["one-pass"]
+    assert ds.N == 300
+
+
+def test_an_auto_load_that_does_not_fit_takes_the_one_pass_path_with_an_index_on_disk(
+    tmp_path, small_budget, monkeypatch, scan_spy
+):
+    from ffast.io import frame_index
+
+    _caches(monkeypatch, tmp_path)
+    small_budget.limit = 16 * 2**20
+    path = write_xyz(tmp_path / "medium.xyz", n=6000)
+    assert Path(path).stat().st_size < 2 * small_budget.limit   # indexed to decide
+    frame_index.get_frame_index(path)
+    assert frame_index.has_cached_or_running_index(path)
+    ds = dataset(path)
+    assert ds.memory_mode == "saving"
+    assert scan_spy == ["one-pass"]
+
+
+def test_a_strided_saving_load_keeps_the_indexed_path(
+    tmp_path, small_budget, monkeypatch, scan_spy
+):
+    _caches(monkeypatch, tmp_path)
+    small_budget.limit = 64 * 2**20
+    ds = dataset(write_xyz(tmp_path / "strided.xyz", n=300), memory_mode="saving", stride=2)
+    assert scan_spy == []
+    assert ds.memory_mode == "saving"
+    assert ds.N == 150
+
+
+def test_two_budgets_that_both_save_leave_the_same_batch_files(
+    tmp_path, monkeypatch, scan_spy
+):
+    _caches(monkeypatch, tmp_path)
+    path = write_xyz(tmp_path / "same.xyz", n=300)
+    names = []
+    for gib in (3, 5):
+        owner = resources.Budget(ram_bytes=gib * 2**30, parsed_bytes=2**30,
+                                 result_bytes=8 * 2**20)
+        monkeypatch.setattr(resources, "_budget", owner)
+        shutil_rmtree(tmp_path / "parsed")
+        shutil_rmtree(tmp_path / "index")
+        ds = dataset_cached(path)
+        folder = ds.storage.folder
+        names.append(sorted(p.name for p in folder.glob("*.npz")))
+        del ds
+        gc.collect()
+    assert names[0] and names[0] == names[1]
+    assert scan_spy == ["one-pass", "one-pass"]
+
+
+def shutil_rmtree(folder):
+    import shutil
+
+    shutil.rmtree(folder, ignore_errors=True)
+
+
+def dataset_cached(path, **kwargs):
+    return ReaderDataset(
+        path,
+        chunks.read_arrays(XyzReader, path, workers=1, memory_mode="saving", **kwargs),
+        "xyz",
+    )
+
+
+def test_a_full_array_load_refused_for_memory_starts_again_in_saving_mode(
+    tmp_path, small_budget, monkeypatch, scan_spy
+):
+    from ffast.readers import text
+
+    _caches(monkeypatch, tmp_path)
+    small_budget.limit = 512 * 2**20          # the estimate fits: full arrays are planned
+
+    def refuse(*args, **kwargs):
+        raise NotEnoughMemory("free memory fell short")
+
+    monkeypatch.setattr(text, "_read_fast", refuse)
+    ds = dataset(write_xyz(tmp_path / "late.xyz", n=300))
+    assert ds.memory_mode == "saving"
+    assert scan_spy == ["one-pass"]
