@@ -39,7 +39,7 @@ def max_bytes(folder):
     # Incremental and complete-array entries use the same parsed disk budget.
     try:
         batches = sum(p.stat().st_size for p in (Path(folder) / "batches").iterdir()
-                      if p.suffix in (".npz", ".json"))
+                      if p.suffix in (".npz", ".json", ".bin"))
     except OSError:
         batches = 0
     maximum = max(0, maximum - batches)

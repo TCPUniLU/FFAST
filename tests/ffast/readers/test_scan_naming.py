@@ -82,11 +82,11 @@ def test_a_cancelled_scan_keeps_its_committed_windows_and_no_temporary_files(fol
             scan(path, Progress(lambda windows: cancelled.__setitem__(0, windows >= 2)))
     finally:
         stop.reset(token)
-    starts = sorted(int(p.name[:-4].split("-")[-2]) for p in folder.glob("*.npz"))
+    starts = sorted(int(p.name[:-4].split("-")[-2]) for p in folder.glob("*-*.npz"))
     assert len(starts) == 2 and starts[0] == 0
     assert not list(folder.glob("*.tmp*"))
     assert [p.name for p in folder.glob("*.lock")] == [".lock"]     # the folder's own, not the scan's
-    assert not list(folder.glob("*.json"))
+    assert [p.name for p in folder.glob("*.json") if not p.name.endswith(".progress.json")] == []
 
 
 def test_a_scan_that_cannot_take_the_lock_loads_correctly_and_writes_no_batches(folder, tmp_path):

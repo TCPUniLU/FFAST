@@ -79,6 +79,17 @@ class ChunkHasher:
         """The digests of the completed chunks, in order (32 bytes each)."""
         return list(self._done)
 
+    def all_digests(self):
+        """The digest of every chunk including the unfinished one: what
+        ``column_digest_of_chunks`` needs to rebuild ``hexdigest()``."""
+        out = list(self._done)
+        if self._pending_rows:
+            h = hashlib.sha256()
+            for piece in self._pending:
+                h.update(piece)
+            out.append(h.digest())
+        return out
+
     def tail(self):
         """The rows of the unfinished chunk, as one array."""
         if not self._pending:
@@ -108,6 +119,15 @@ class ChunkHasher:
                 h.update(piece)
             column.update(h.digest())
         return column.hexdigest()
+
+
+def column_digest_of_chunks(chunk_digests):
+    """The column digest from the digest of every chunk, in order (32 bytes
+    each, the last chunk possibly short): the inverse of ``all_digests()``."""
+    column = hashlib.sha256(SCHEME)
+    for d in chunk_digests:
+        column.update(bytes(d))
+    return column.hexdigest()
 
 
 def array_digest(array):

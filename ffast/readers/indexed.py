@@ -27,6 +27,7 @@ from ffast.cache.fingerprint import SCHEME, ChunkHasher
 from ffast.io.batched import BatchedArray
 from ffast.io.budget import budget
 from ffast.io.extxyz_arrays import NotEnoughMemory, NotFast
+from ffast.readers import scan_record
 from ffast.readers.contract import ReaderError
 
 log = logging.getLogger("FFAST")
@@ -35,6 +36,8 @@ _parse_lock = threading.RLock()
 # Stores open in this process. Eviction must not delete their cache files.
 # This guards one process only: another server sharing the folder cannot see it.
 _live_stores = weakref.WeakSet()
+# The chunk digests of a finished scan, beside its manifest (ADR 0107).
+CHUNKS_SUFFIX = ".chunks.npz"
 
 
 def _protected(path, owner):
@@ -42,6 +45,9 @@ def _protected(path, owner):
     store that is saving (``owner``) may still trim its own files. The files
     of every open identity are named by it, scan or no scan (ADR 0107)."""
     name = Path(path).name
+    if (owner is not None and name.startswith(owner.identity)
+            and (scan_record.is_state_file(name) or name.endswith(CHUNKS_SUFFIX))):
+        return True        # the saving scan's own record and digest sidecar
     return any(s is not owner and name.startswith(s.identity)
                for s in list(_live_stores))
 
@@ -208,6 +214,8 @@ class IndexedStore:
         self._small_bytes = 0
         self._small_limit = min(128 * 2**20, budget().limit // 8)
         self._warming = False
+        self._record = None
+        self._chunk_sidecar = None
         if scan_source:
             self._warming = True
             self._scan_source(progress)
@@ -273,6 +281,14 @@ class IndexedStore:
         self._scan_allowance = None
         self._kept_level = None
         pending = None
+        if self.use_cache and budget().parsed_limit:
+            # What an earlier, stopped scan left of this identity is not
+            # trusted here (resuming comes later): start its record afresh.
+            self._record = scan_record.ScanRecord(self.folder, self.identity)
+            try:
+                self._record.clear()
+            except OSError:
+                self._record = None
         try:
             with ThreadPoolExecutor(max_workers=min(4, text.fast_threads())) as hashes, \
                     ThreadPoolExecutor(max_workers=1) as parsing:
@@ -293,6 +309,11 @@ class IndexedStore:
                     self._observe(part, a, b)
                     self._remember_small(part, a, b)
                     self._observe_elements(part, a, b)
+                    if self._record is not None:
+                        if self._cache_path(a, b).exists():
+                            self._record.commit(self, a, b, end)
+                        else:
+                            self._record.abandon("a batch was not kept")
                     if progress and callable(getattr(progress, "bytes_read", None)):
                         progress.bytes_read(min(int(end), self.state[2]), self.state[2], b)
 
@@ -312,6 +333,7 @@ class IndexedStore:
             self.check_source()
             if not len(self.counts):
                 raise ReaderError(f"{os.path.basename(self.path)} has no frames")
+            self._save_chunk_sidecar()
             for info in self.info.values():
                 info["digest"] = info["hashes"][info["dtype"].str].hexdigest()
                 info["float_digest"] = info["hashes"][np.dtype(np.float64).str].hexdigest()
@@ -329,7 +351,9 @@ class IndexedStore:
                         self.same_formula = False
                         break
             self._finish_small()
-            self._save_manifest()
+            saved = self._save_manifest()
+            if self._record is not None and saved:
+                self._record.finish()
             self._warming = False
             frame_index.save_cached(index)
             text._save_table(self.reader, self.path, (self.state[2], self.state[3]),
@@ -340,6 +364,8 @@ class IndexedStore:
             # Only half-written files go; committed batches stay (ADR 0107).
             if self.folder.exists():
                 for path in self.folder.glob(self.identity + "-*.tmp"):
+                    path.unlink(missing_ok=True)
+                for path in self.folder.glob(self.identity + ".*.tmp"):
                     path.unlink(missing_ok=True)
             self._unlock_scan(lock)
 
@@ -487,8 +513,9 @@ class IndexedStore:
             return False
 
     def _save_manifest(self):
+        """Write the manifest; True when it is on disk."""
         if not self.use_cache:
-            return
+            return False
         temp = None
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
@@ -503,9 +530,11 @@ class IndexedStore:
                 "elements": sorted(self.element_set),
                 "ranges": self.ranges,
             }
+            if self._chunk_sidecar:
+                meta["chunks"] = self._chunk_sidecar
             data = json.dumps(meta)
             if len(data) > min(budget().parsed_limit, budget().block_bytes):
-                return
+                return False
             from ffast.io.frame_cache import _entry_bytes
 
             with _disk_lock:
@@ -525,7 +554,8 @@ class IndexedStore:
                     # Preserve the tiny schema/fingerprint record by dropping
                     # an atom batch rather than repeating a full source scan.
                     candidates = sorted(self.folder.glob("*.npz"),
-                        key=lambda p: (p.name.endswith("--1--1.npz"), p.stat().st_mtime_ns))
+                        key=lambda p: (p.name.endswith(("--1--1.npz", CHUNKS_SUFFIX)),
+                                       p.stat().st_mtime_ns))
                     for candidate in candidates:
                         if _protected(candidate, self):
                             continue
@@ -534,7 +564,7 @@ class IndexedStore:
                         used -= candidate.stat().st_size
                         candidate.unlink(missing_ok=True)
                 if used - old + len(data) > limit:
-                    return
+                    return False
                 fd, temp = tempfile.mkstemp(dir=self.folder, prefix=f"{self.identity}-",
                                             suffix=".tmp")
                 with os.fdopen(fd, "w") as f:
@@ -542,6 +572,36 @@ class IndexedStore:
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(temp, destination)
+            return True
+        except OSError:
+            if temp:
+                Path(temp).unlink(missing_ok=True)
+            return False
+
+    def _save_chunk_sidecar(self):
+        """Keep the chunk digests of every column beside the manifest: one
+        ``(n_chunks, 32)`` uint8 array per column and dtype candidate, the last
+        row being the digest of the unfinished chunk. They rebuild each column
+        digest, and let a later check compare chunk by chunk (ADR 0107)."""
+        self._chunk_sidecar = None
+        if not (self.use_cache and budget().parsed_limit):
+            return
+        arrays = {}
+        for key, info in self.info.items():
+            for d, h in info["hashes"].items():
+                arrays[f"{d}|{key}"] = np.frombuffer(
+                    b"".join(h.all_digests()), dtype=np.uint8).reshape(-1, 32)
+        name = f"{self.identity}{CHUNKS_SUFFIX}"
+        temp = None
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            fd, temp = tempfile.mkstemp(dir=self.folder, prefix=f"{self.identity}-", suffix=".tmp")
+            with os.fdopen(fd, "wb") as f:
+                np.savez(f, **arrays)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp, self.folder / name)
+            self._chunk_sidecar = name
         except OSError:
             if temp:
                 Path(temp).unlink(missing_ok=True)
@@ -710,11 +770,14 @@ class IndexedStore:
                         (
                             p
                             for p in self.folder.iterdir()
-                            if p.suffix in (".npz", ".json")
+                            if p.suffix in (".npz", ".json", ".bin")
                         ),
-                        # Tiny identity/schema records and scalar columns
-                        # prevent full rescans; evict atom batches before them.
-                        key=lambda p: (p.suffix == ".json" or p.name.endswith("--1--1.npz"),
+                        # Tiny identity/schema records, digest sidecars and
+                        # scalar columns prevent full rescans; evict atom
+                        # batches before them. A scan's record files
+                        # (.bin, .tail.npz, .progress.json) are part of its
+                        # identity, and an open scan's are never taken.
+                        key=lambda p: (p.suffix == ".json" or p.name.endswith(("--1--1.npz", CHUNKS_SUFFIX)),
                                        p.stat().st_mtime_ns),
                     )
                     used = sum(p.stat().st_size for p in files)
