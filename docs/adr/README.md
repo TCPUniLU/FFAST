@@ -142,7 +142,7 @@ things came up.
 - [0102](0102-large-datasets-have-a-memory-saving-mode.md) Large datasets have a memory-saving mode: shared RAM budget, optional parsed disk cache, batch processing, and separate laptop and Slurm resource policies (accepted, built; cluster benchmarking pending)
 - [0103](0103-large-xyz-files-are-indexed-beside-parsing.md) Large XYZ files are indexed beside parsing; parallel hashing, retained scalar columns and stable cache partitions remove repeated work within the existing resource limits (accepted, built)
 - [0104](0104-related-force-metrics-share-batched-passes.md) Related force metrics share a summary pass and parity-binning pass, with bounded result storage and cancellation shared across consumers (accepted, built)
-- [0105](0105-ingestion-benchmarks-time-synthetic-files-in-turns.md) Ingestion benchmarks time seeded synthetic files in turns: `benchmarks/ingest/` generates 18 extxyz files (3 sizes × 3 atom classes × constant/variable), runs the profiler on two checkouts in alternating order, stores one Parquet row per run for DuckDB, and gives median, spread and a worse/better/no-clear-change verdict (proposed, built)
+- [0105](0105-ingestion-benchmarks-time-synthetic-files-in-turns.md) Ingestion benchmarks time seeded synthetic files in turns: `benchmarks/ingest/` generates 18 extxyz files (3 sizes × 3 atom classes × constant/variable), runs the profiler on two checkouts in alternating order, stores one Parquet row per run for DuckDB, and gives median, spread and a worse/better/no-clear-change verdict (accepted, built)
 
 ## Format
 

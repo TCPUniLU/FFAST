@@ -1,6 +1,6 @@
 # Ingestion benchmarks time synthetic files in turns
 
-Status: Proposed 2026-11-18. Builds on ADR 0102 (memory-saving mode), ADR 0103
+Status: Accepted and implemented 2026-11-18. Builds on ADR 0102 (memory-saving mode), ADR 0103
 (one-pass indexing) and the profiler in `ffast/profiling.py`. Implements spec
 `FFAST_data_ingestion_spec_v1.md` §7 as reduced by its §11a item 5.
 
