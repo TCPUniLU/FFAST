@@ -87,6 +87,7 @@ and on the 10 example files, except where the table under decision 4 says.
    | A key given twice | the last value wins | the same |
    | Escaped quotes; `_JSON` values | reads them; skips `_JSON` | the same |
    | `Z` column, whole-number and optional per-atom columns | reads them | the same |
+   | `nan`, `inf`, `Infinity` in real atom columns, with signs and mixed case | reads them, including the NaN sign bit | the same (added after profiling an 84 GiB biomolecule file, 2026-11-15) |
 
    A test runs both parsers on the edge-case files and the example files, so
    a new difference fails the suite.

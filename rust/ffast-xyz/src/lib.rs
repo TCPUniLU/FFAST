@@ -6,8 +6,9 @@
 //! `parse_block`) exactly. Where it cannot be sure to give the same value it
 //! raises `NotFast`, and FFAST reads the file with the Python parser:
 //!
-//! - numbers: only plain decimal text (`-1.5e3`, `.5`, `7`) is read here; the
-//!   rest (`1_000`, `nan`, `0x10`, a 128-bit integer) is the Python parser's.
+//! - atom numbers: plain decimal text (`-1.5e3`, `.5`, `7`) and standard
+//!   signed/case-insensitive NaN and infinity spellings are read here; the
+//!   rest (`1_000`, `0x10`, a 128-bit integer) is the Python parser's.
 //!   A header value that might be such a number comes back as text, for Python
 //!   to convert; an atom line with one hands the file over;
 //! - non-ASCII text outside a quoted header value, unusual column layouts, and
@@ -111,7 +112,20 @@ fn atom_float(t: &[u8]) -> Option<f64> {
     if float_text(t) {
         as_str(t).parse().ok()
     } else {
-        None
+        // numpy's real-column conversion accepts these common missing and
+        // non-finite values. Preserve the NaN sign too: dataset fingerprints
+        // hash the exact float64 bytes, not just numerical equality.
+        let unsigned = &t[sign(t)..];
+        let value = if unsigned.eq_ignore_ascii_case(b"nan") {
+            f64::NAN
+        } else if unsigned.eq_ignore_ascii_case(b"inf")
+            || unsigned.eq_ignore_ascii_case(b"infinity")
+        {
+            f64::INFINITY
+        } else {
+            return None;
+        };
+        Some(if t.first() == Some(&b'-') { -value } else { value })
     }
 }
 

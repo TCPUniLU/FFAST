@@ -38,7 +38,7 @@ def frames(n, header, atom, atoms=2):
 CASES = {}
 # Numbers in atom lines (from the prototype's diff_edges.py).
 for tok in ["1.5", ".5", "5.", "1e5", "1E+05", "+1.0", "-0.0", "1.0e-320", "1e400", "inf", "-inf",
-            "nan", "NaN", "Infinity", "1_000.5", "0x1p3", "1.0d0", "1,5",
+            "nan", "NaN", "+NaN", "-nan", "Infinity", "+Inf", "-INFINITY", "1_000.5", "0x1p3", "1.0d0", "1,5",
             "0.1000000000000000055511151231257827021181583404541015625", "１.5"]:
     CASES[f"atom number {tok!r}"] = two_frames(pos=tok)
 # Numbers in headers.
@@ -128,9 +128,17 @@ CASES["energies and fields, ints and floats"] = frames(
 CASES["a column that starts after frame 100"] = frames(
     104, lambda i: "Properties=species:S:1:pos:R:3" + (":late:R:1" if i >= 102 else "") + f" energy={i}",
     lambda i, a: f"H {a}.0 0 {i}.0" + (f" {i}.5" if i >= 102 else ""), atoms=1)
+CASES["missing optional biomolecule values"] = frames(
+    3,
+    lambda i: 'Properties=species:S:1:pos:R:3:forces:R:3:forces_so3lr:R:3:hirshfeld_ratios:R:1 '
+              'energy=-148565.0 energy_so3lr=-358.178 dipole_vec="nan nan nan" pbc="F F F"',
+    lambda i, a: f"C {a}.0 0 {i}.0 0.1 0.2 0.3 -0.1 0.2 0.3 nan")
 
 # Read by the fast parser itself, not handed over.
 FAST = {
+    "missing optional biomolecule values",
+    *(f"atom number {tok!r}" for tok in
+      ["nan", "NaN", "+NaN", "-nan", "inf", "-inf", "Infinity", "+Inf", "-INFINITY"]),
     "atom number '1.5'", "atom number '.5'", "atom number '5.'", "atom number '1e5'",
     "atom number '-0.0'", "atom number '1.0e-320'", "atom number '1e400'",
     "atom number '0.1000000000000000055511151231257827021181583404541015625'",
