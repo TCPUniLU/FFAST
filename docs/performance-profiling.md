@@ -135,3 +135,9 @@ metrics. The resulting reader/cache changes are recorded in
 
 For measured results and the confirmed batch-cache mismatch, see the
 [SO3LR laptop report](reports/2026-11-15-so3lr-laptop-profile.md).
+
+To compare two versions of the code, or to time seeded synthetic files of many
+sizes and atom counts, use the harness in `benchmarks/ingest/` (see its README
+and [ADR 0105](adr/0105-ingestion-benchmarks-time-synthetic-files-in-turns.md)).
+It calls this profiler for each run, alternates the checkouts to cancel drift,
+and reports medians, spread and a verdict instead of single timings.
