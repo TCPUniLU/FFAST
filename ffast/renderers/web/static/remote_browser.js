@@ -248,8 +248,10 @@ export function keyPrefix(key) {
  */
 export function datasetLoadKwargs({
   keysShown = false, energyKey = '', forceKey = '', predictions = [], stride = 1, sampling = null,
+  memoryMode = 'auto',
 } = {}) {
   const kw = {};
+  if (memoryMode === 'saving') kw.memory_mode = 'saving';
   if (keysShown) {
     kw.selected_energy_key = energyKey || null;
     kw.selected_force_key = forceKey || null;
@@ -801,6 +803,7 @@ export class RemoteBrowser {
     $('fb-keys').hidden = true;
     $('fb-pred-rows').replaceChildren();
     $('fb-stride').value = '1';
+    if ($('fb-memory-mode')) $('fb-memory-mode').value = 'auto';
     $('fb-large').hidden = true;
     this._resetSample();
     this._sampleNTouched = false;
@@ -1264,6 +1267,12 @@ export class RemoteBrowser {
     }
     if (this._mode === 'dataset') {
       this._typeTouched = false;
+      if ($('fb-memory-mode')) {
+        const indexed = /\.(extxyz|xyz)$/i.test(name);
+        $('fb-memory-mode').disabled = !indexed;
+        $('fb-memory-mode').title = indexed ? '' : 'Save memory is available for XYZ and EXTXYZ files.';
+        if (!indexed) $('fb-memory-mode').value = 'auto';
+      }
       $('fb-type').value = typeForFile(name, this._types.datasets);
       this._refreshDatasetKeys();
       this._refreshLarge(Number(row.dataset.size || 0));
@@ -1456,6 +1465,7 @@ export class RemoteBrowser {
       // LOAD_DATASET reads args=[path, datasetType]; the keys travel as kwargs
       // when the file offered a choice, else the server's default keys apply.
       const kwargs = datasetLoadKwargs({
+        memoryMode: $('fb-memory-mode')?.value || 'auto',
         keysShown: !$('fb-keys').hidden,
         energyKey: $('fb-ds-energy-key').value,
         forceKey: $('fb-ds-force-key').value,

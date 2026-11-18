@@ -17,7 +17,14 @@ import numpy as np
 
 
 def md5FromArraysAndStrings(*args):
-    return md5FromParts(hashlib.md5(_bytesOf(arg)) for arg in args)
+    from ffast.io.batched import BatchedArray
+
+    fp = hashlib.md5()
+    for arg in args:
+        digest = (bytes.fromhex(arg.content_digest()) if isinstance(arg, BatchedArray)
+                  else hashlib.md5(_bytesOf(arg)).digest())
+        fp.update(digest)
+    return fp.hexdigest()
 
 
 def md5FromParts(parts):

@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import numpy as np
+from ffast.io.batched import asarray
 
 from ffast.metrics.cache import MetricCache, function_hash
 from ffast.metrics.dims import shape_to_str
@@ -222,7 +223,7 @@ def build_execution_plan(
                 if not optional and failure is None:
                     failure = f"Input '{local_key}' (ref '{ref}') is unavailable for this dataset"
             else:
-                bindings[local_key] = RawInput(np.asarray(value), source.identity(ref))
+                bindings[local_key] = RawInput(asarray(value), source.identity(ref))
 
         # Bare optional inputs — declared in optional_inputs but not in inputs.
         for opt_key in schema.optional_inputs:
@@ -230,7 +231,7 @@ def build_execution_plan(
                 found, value = source.get(metric_id, opt_key, opt_key)
                 present = found and value is not None
                 bindings[opt_key] = RawInput(
-                    np.asarray(value) if present else None,
+                    asarray(value) if present else None,
                     source.identity(opt_key) if present else None,
                 )
 
@@ -273,6 +274,7 @@ def run_plan(
     stopped: Callable[[], bool] = lambda: False,
     key_out: dict | None = None,
     uses: frozenset = frozenset(),
+    stream_intermediates: bool = False,
 ) -> dict[str, MetricResult | MetricFailure]:
     """Execute a plan's steps in order → ``{metric_id: MetricResult | MetricFailure}``.
 
@@ -293,6 +295,10 @@ def run_plan(
     ``uses`` (the source's ``(dataset_fp, model_fp)``) is recorded against
     every step's key, so deleting that dataset or prediction can delete the
     results only it used.
+
+    ``stream_intermediates`` lets a streaming transport retain virtual
+    dependency arrays instead of storing them in full. Root results keep
+    their usual storage admission, including when a dependency is reused.
     """
     results: dict[str, MetricResult | MetricFailure] = {}
     # Each step's cache key: a step reading another's output is keyed by that
@@ -304,6 +310,7 @@ def run_plan(
     for step in plan.steps:
         metric_id = step.metric_id
         schema, fn = registry.get(metric_id)
+        defer = stream_intermediates and metric_id not in plan.root_ids
 
         halted = halted or stopped()
         if halted:
@@ -375,13 +382,14 @@ def run_plan(
                 results[metric_id] = shared
                 continue
             result = _compute_step(step, schema, fn, kwargs, warnings, run_fn, cache, cache_key,
-                                   key_ms, read_ms)
+                                   key_ms, read_ms, defer=defer)
         else:
             result = None
             try:
                 # Finished between the cache read and the claim.
                 result = cache.get(cache_key) or _compute_step(
-                    step, schema, fn, kwargs, warnings, run_fn, cache, cache_key, key_ms, read_ms)
+                    step, schema, fn, kwargs, warnings, run_fn, cache, cache_key, key_ms, read_ms,
+                    defer=defer)
             finally:
                 cache.release(cache_key, result if isinstance(result, MetricResult) else None)
         results[metric_id] = result
@@ -393,7 +401,8 @@ def run_plan(
     return results
 
 
-def _compute_step(step, schema, fn, kwargs, warnings, run_fn, cache, cache_key, key_ms, read_ms):
+def _compute_step(step, schema, fn, kwargs, warnings, run_fn, cache, cache_key, key_ms, read_ms,
+                  *, defer=False):
     """Run one step and cache its result → ``MetricResult | MetricFailure``."""
     metric_id = step.metric_id
     raw = run_fn(metric_id, schema, fn, kwargs, step.compute_params)
@@ -402,7 +411,14 @@ def _compute_step(step, schema, fn, kwargs, warnings, run_fn, cache, cache_key, 
     if isinstance(raw, WithWarnings):
         warnings = [*warnings, *raw.warnings]
         raw = raw.values
-    arr = np.asarray(raw)
+    from ffast.io.result_array import store_result
+    from ffast.io.extxyz_arrays import NotEnoughMemory
+    try:
+        from ffast.io.batched import BatchedArray
+        arr = asarray(raw if defer and isinstance(raw, BatchedArray) else store_result(raw))
+    except (NotEnoughMemory, MemoryError) as exc:
+        return MetricFailure(metric_id=metric_id, traceback=str(exc),
+                             parameters=step.compute_params, kind="temporary")
     result = MetricResult(
         metric_id=metric_id,
         shape=shape_to_str(schema.shape),

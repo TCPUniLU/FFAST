@@ -140,6 +140,9 @@ class MetricResult(BaseModel):
     # result with this tag is told "unchanged" instead of sent it again. A
     # copy (spilled to disk and read back) keeps it.
     _tag: Optional[str] = PrivateAttr(default=None)
+    _colour_only: bool = PrivateAttr(default=False)
+    _colour_span: Optional[tuple[float, float]] = PrivateAttr(default=None)
+    _colour_elements: Any = PrivateAttr(default=None)
 
 
 class WithWarnings:

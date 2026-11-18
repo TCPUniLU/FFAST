@@ -48,7 +48,8 @@ def test_load_dataset_request_accepts_the_real_wire_shape():
         "prediction_keys": [["e", "f"]], "slice_num": 3,
     }
     # sampling (ADR 0096) is optional: absent on the wire, None in the dump.
-    assert LoadDatasetRequest.model_validate(payload).model_dump() == {**payload, "sampling": None}
+    assert LoadDatasetRequest.model_validate(payload).model_dump() == {
+        **payload, "sampling": None, "memory_mode": "auto"}
     sampled = {"path": "/data.xyz", "dataset_type": "ase", "sampling": {"n": 500, "seed": 42}}
     assert LoadDatasetRequest.model_validate(sampled).model_dump()["sampling"] == {"n": 500, "seed": 42}
 

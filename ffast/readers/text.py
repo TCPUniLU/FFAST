@@ -92,6 +92,7 @@ def per_atom(key: str) -> bool:
 # ── the frame list, per reader and file ─────────────────────────────────────
 
 _lock = threading.Lock()
+_scan_parse_lock = threading.Lock()
 _tables: dict = {}
 
 
@@ -388,14 +389,39 @@ class _Joined:
         self.f += n_frames
 
 
+def can_scan_and_read(reader_class, path, *, stride=0, select=None, memory_mode="auto", **kwargs):
+    """Large, unsampled XYZ files can be indexed beside bounded parsing.
+
+    A valid frame index already on disk takes the ordinary cached path.
+    This is an optional optimization; every other reader keeps its contract.
+    """
+    from ffast.io.budget import budget
+    return (reader_class.name == "xyz" and select is None and int(stride or 0) <= 1
+            and memory_mode in ("auto", "saving") and budget().limit >= 16 * 2**20
+            and os.path.getsize(path) > 2 * budget().limit
+            and fast_parser_usable() and frame_index._fast_finder() is not None
+            and not frame_index.has_cached_or_running_index(path))
+
+
 def read_level2(reader_class, path, *, stride=0, select=None, progress=None, workers=None,
-                batch=None, use_cache=True, on_handover=None):
+                batch=None, use_cache=True, on_handover=None, memory_mode="auto"):
     """The kept frames of ``path`` through a Level 2 reader: ``(arrays,
     contents, frames, n_file_frames)``. ``on_handover(text)`` gets the load's
     status text when the fast parser hands the file over (ADR 0100)."""
     name = os.path.basename(path)
     reader = reader_class(path)
     contents = dict(reader.contents() or {})
+    if can_scan_and_read(reader_class, path, stride=stride, select=select, memory_mode=memory_mode):
+        from ffast.readers.indexed import IndexedArrays, IndexedStore
+        with _scan_parse_lock:
+            if can_scan_and_read(reader_class, path, stride=stride, select=select, memory_mode=memory_mode):
+                try:
+                    store = IndexedStore(reader_class, path, contents, [], [], [], [],
+                        progress=progress, workers=workers, use_cache=use_cache, scan_source=True)
+                    return IndexedArrays(store), contents, list(range(len(store.counts))), len(store.counts)
+                except NotFast:
+                    # Unusual count syntax keeps the Python scanner's errors.
+                    pass
     starts, counts = get_table(reader_class, path)
     n_file = len(counts)
     if select is not None:
@@ -407,6 +433,34 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
     if total == 0:
         raise ReaderError(f"{name} has no frames")
 
+    if memory_mode not in ("auto", "saving"):
+        raise ReaderError("Memory mode must be 'auto' or 'saving'")
+    from ffast.io.budget import budget
+    index = np.asarray(frames, dtype=np.intp)
+    kept_counts = counts[index]
+    fields = len(contents.get("atom_fields") or [])
+    forces = len(contents.get("forces") or [])
+    estimate = int(kept_counts.sum()) * (32 + 24 * forces + 8 * fields)
+    estimate += total * (80 + 8 * (len(contents.get("energies") or [])
+                                  + len(contents.get("frame_fields") or [])))
+    if reader_class.name == "xyz":
+        owner = budget()
+        try:
+            physical = int(_physical_sizes(starts[index], starts[index + 1]).sum())
+            workspace = min(GROUP_BYTES, max(1024, owner.limit // 8), physical) * 3
+            owner.check(estimate + workspace)
+            fits = True
+        except NotEnoughMemory:
+            fits = False
+        if memory_mode == "saving" or not fits:
+            from ffast.readers.indexed import IndexedArrays, IndexedStore
+            logger.info("Reading %s in memory-saving mode: %s frames, shared RAM limit %.1f MiB",
+                        name, f"{total:,}", owner.limit / 2**20)
+            store = IndexedStore(reader_class, path, contents, frames, starts[index],
+                                 starts[index + 1], kept_counts, progress=progress,
+                                 workers=workers, use_cache=use_cache)
+            return IndexedArrays(store), contents, frames, n_file
+
     step = _regular_step(frames)
     if use_cache and step is not None:
         kept = _kept_load(reader_class, path, step)
@@ -414,6 +468,9 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
             logger.info("%s: opened the arrays kept from an earlier load", name)
             if progress:
                 progress(total, total)
+            if reader_class.name == "xyz":
+                for value in kept[0].values():
+                    budget().retain(value)
             return kept[0], contents, frames, n_file
 
     index = np.asarray(frames, dtype=np.intp)
@@ -442,6 +499,9 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
         kept = _kept_load(reader_class, path, step)   # None: not kept, or cannot be opened
         if kept is not None:
             arrays = kept[0]
+    if reader_class.name == "xyz":
+        for value in arrays.values():
+            budget().retain(value)
     return arrays, contents, frames, n_file
 
 
@@ -583,17 +643,18 @@ def _warn_no_fast_parser():
                    "`ffast install-fast-reader` to %s and load them up to 10× faster.", why, fix)
 
 
-def _groups(sizes, batch=None):
+def _groups(sizes, batch=None, max_bytes=None):
     """``[(a, b)]`` row ranges over frames whose texts are ``sizes`` bytes:
     ``batch`` frames each (default 1/GROUPS of them), cut short at
     GROUP_BYTES of text, at least one frame."""
+    max_bytes = GROUP_BYTES if max_bytes is None else max_bytes
     total = len(sizes)
     per = int(batch) if batch else -(-total // GROUPS)
     ends = np.cumsum(np.asarray(sizes, dtype=np.int64))
     out, a = [], 0
     while a < total:
         before = int(ends[a - 1]) if a else 0
-        fit = int(np.searchsorted(ends, before + GROUP_BYTES, side="right"))   # frames up to here fit
+        fit = int(np.searchsorted(ends, before + max_bytes, side="right"))   # frames up to here fit
         b = max(a + 1, min(a + per, fit, total))
         out.append((a, b))
         a = b
@@ -652,6 +713,35 @@ class _Values:
 
 def _read_fast(reader_class, path, contents, frames, spans_start, spans_end, kept_counts,
                progress, threads, batch):
+    from ffast.io.budget import budget
+    owner = budget()
+    fields = len(contents.get("atom_fields") or [])
+    forces = len(contents.get("forces") or [])
+    final = int(np.sum(kept_counts)) * (32 + 24 * forces + 8 * fields)
+    final += len(frames) * (80 + 8 * (len(contents.get("energies") or [])
+                                    + len(contents.get("frame_fields") or [])))
+    sizes = _physical_sizes(spans_start, spans_end)
+    groups = _groups(sizes, batch, max_bytes=max(1024, min(GROUP_BYTES, owner.limit // 8)))
+    peak = max((int(sizes[a:b].sum()) for a, b in groups), default=0)
+    with owner.reserve(final + peak * 3) as lease:
+        arrays = _read_fast_arrays(reader_class, path, contents, frames, spans_start,
+                                   spans_end, kept_counts, progress, threads, batch)
+        for value in arrays.values():
+            owner.retain(value, lease)
+        return arrays
+
+
+def _physical_sizes(starts, ends):
+    sizes = ends - starts
+    if len(sizes) > 1:
+        gaps = starts[1:] - ends[:-1]
+        sizes = sizes.copy()
+        sizes[1:] += np.where((gaps >= 0) & (gaps <= 1 << 20), gaps, 0)
+    return sizes
+
+
+def _read_fast_arrays(reader_class, path, contents, frames, spans_start, spans_end, kept_counts,
+               progress, threads, batch, *, log_read=True):
     """The kept frames through the reader's ``parse_into``: FFAST's arrays,
     made at full size, filled one group at a time."""
     name = os.path.basename(path)
@@ -673,9 +763,12 @@ def _read_fast(reader_class, path, contents, frames, spans_start, spans_end, kep
         raise NotEnoughMemory(
             f"{name} needs about {_gib(need)} of memory to load ({atoms:,} atoms in {total:,} "
             f"frames), but {_gib(free)} is free. Close other programs, or load a smaller file.")
-    groups = _groups(spans_end - spans_start, batch)
-    logger.info("Reading %s with the fast parser: %s frames, %d groups, %d thread(s), about %s of %s free",
-                name, f"{total:,}", len(groups), threads, _gib(need), _gib(free))
+    from ffast.io.budget import budget
+    groups = _groups(_physical_sizes(spans_start, spans_end), batch,
+                     max_bytes=max(1024, min(GROUP_BYTES, budget().limit // 8)))
+    if log_read:
+        logger.info("Reading %s with the fast parser: %s frames, %d groups, %d thread(s), about %s of %s free",
+                    name, f"{total:,}", len(groups), threads, _gib(need), _gib(free))
 
     arrays = {"n_atoms": np.array(kept_counts, dtype=np.int64),
               "numbers": np.empty(atoms, dtype=np.int64),

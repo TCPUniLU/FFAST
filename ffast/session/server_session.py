@@ -101,14 +101,17 @@ def _thin_view(kind, results, view):
     per frame of equal length)."""
     from ffast.session.thinning import thin_line, thin_points
 
-    arrays = {r: np.asarray(res.values) for r, res in results.items()}
+    from ffast.io.batched import BatchedArray, asarray
+    arrays = {r: asarray(res.values) for r, res in results.items()}
     lengths = {a.shape[0] if a.ndim == 1 else -1 for a in arrays.values()}
     if len(lengths) != 1 or -1 in lengths or "y" not in arrays:
         return None, None
     n = lengths.pop()
     width, height = view.get("width") or 700, view.get("height") or 300
     if kind == "line":
-        xs = arrays.get("x", np.arange(n))
+        xs = arrays.get("x")
+        if xs is None:
+            xs = BatchedArray((n,), np.int64, lambda a, b: np.arange(a, b))
         idx = thin_line(xs, arrays["y"], view.get("x_range"), width)
     elif "x" in arrays:
         idx = thin_points(arrays["x"], arrays["y"], view.get("x_range"), view.get("y_range"),
@@ -127,7 +130,7 @@ def _frames_of(values, frames):
     # Older entries: a list of arrays, or one array.
     if isinstance(values, list):
         return [values[i] for i in frames]
-    return np.asarray(values)[frames]
+    return np.asarray(values[frames])
 
 
 def _frame_of(values, i):
@@ -464,7 +467,7 @@ class ServerSession:
 
     def get_metric(self, metric_id, params, dataset_fp, model_fp, wanted=None):
         """``get_metric(...)`` for build_scene: a metric over the whole dataset,
-        read from the result store, the same one a 2D plot reads (ADR 0085).
+        read from a colour summary or an existing full plot result.
 
         None when it is not stored. With ``wanted`` (a list), a result the
         store could compute has its arguments added to ``wanted`` (ADR 0082).
@@ -477,7 +480,11 @@ class ServerSession:
         result = results.peek(metric_id, params, dataset_fp, model_fp)
         if result is not None:
             return result
-        if wanted is not None and results.can_compute(metric_id, params, dataset_fp, model_fp):
+        colours = results.colours
+        result = colours.peek(metric_id, params, dataset_fp, model_fp)
+        if result is not None:
+            return result
+        if wanted is not None and colours.can_compute(metric_id, params, dataset_fp, model_fp):
             wanted.append((metric_id, params, dataset_fp, model_fp))
         return None
 
@@ -536,8 +543,10 @@ class ServerSession:
         data = self.env.data
         made, problems = [], []
         for args in wanted:
-            # Shared with a 2D plot asking for the same metric meanwhile.
-            outcome = await self.env.results.get(*args)
+            # Reuse a full plot result if present; otherwise only scan bounds.
+            outcome = self.env.results.peek(*args)
+            if outcome is None:
+                outcome = await self.env.results.colours.get(*args)
             if isinstance(outcome, MetricResult):
                 made.append(outcome)
             else:
@@ -2047,9 +2056,9 @@ class ServerSession:
                 outcomes[role] = (o.text, o.kind)
 
         idx = n = None
-        if all(isinstance(o, MetricResult) for o in outcomes.values()):
-            idx, n = await asyncio.to_thread(_thin_view, kind, outcomes, kwargs)
         try:
+            if all(isinstance(o, MetricResult) for o in outcomes.values()):
+                idx, n = await asyncio.to_thread(_thin_view, kind, outcomes, kwargs)
             data = pack_plot_view(request_id, outcomes, idx, n)
         except Exception as exc:
             logger.warning("PLOT_VIEW for %r could not be packed: %s", request_id, exc)

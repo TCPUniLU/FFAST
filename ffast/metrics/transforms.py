@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import numpy as np
+from ffast.io.batched import BatchedArray, asarray, blocks
 
 from ffast.metrics import dims, units  # noqa: F401  (units re-exported for callers)
 from ffast.metrics.registry import default_registry
@@ -54,6 +55,9 @@ def _smooth(values, window):
     degrades to a single mean rather than emitting nothing. A gap (NaN) is left
     out of each window's mean and stays in its place, so the frames keep their
     positions; a window of gaps only is a gap."""
+    if isinstance(values, BatchedArray):
+        from ffast.metrics.streaming import smooth
+        return smooth(values, window)
     v = np.asarray(values, dtype=np.float64).ravel()
     w = int(max(1, min(window, len(v)))) if len(v) else 1
     if w <= 1:
@@ -119,6 +123,9 @@ def _binned_kde(sample, x, per_sigma=8, max_bins=1 << 22):
 def _mirror_kde(values):
     """Symmetric-mirror KDE of ``|values|`` over ``[0, max·1.05]`` — the
     error-distribution shape (mirror about zero so it starts at 0)."""
+    if isinstance(values, BatchedArray):
+        from ffast.metrics.streaming import kde
+        return kde(values, "mirror")
     a = np.abs(np.asarray(values, dtype=np.float64).ravel())
     sample = np.concatenate([a, -a]) if a.size else np.array([0.0, 0.0])
     return _kde_xy(sample, lambda s: (0.0, float(np.max(np.abs(s))) * 1.05))
@@ -127,6 +134,9 @@ def _mirror_kde(values):
 def _abs_kde(values):
     """KDE of ``|values|`` (not mirrored) over ``[min·0.95, max·1.05]`` — the
     per-element atomic-error distribution shape."""
+    if isinstance(values, BatchedArray):
+        from ffast.metrics.streaming import kde
+        return kde(values, "abs")
     a = np.abs(np.asarray(values, dtype=np.float64).ravel())
     return _kde_xy(a, lambda s: (float(np.min(s)) * 0.95, float(np.max(s)) * 1.05))
 
@@ -135,6 +145,9 @@ def _value_kde(values):
     """KDE of raw ``values`` over ``[min, max]`` padded 5% each side — the
     distribution shape for non-error quantities (e.g. gyration radius)."""
 
+    if isinstance(values, BatchedArray):
+        from ffast.metrics.streaming import kde
+        return kde(values, "value")
     def bounds(s):
         delta = float(np.max(s) - np.min(s))
         return (float(np.min(s)) - delta * 0.05, float(np.max(s)) + delta * 0.05)
@@ -186,7 +199,7 @@ _SCALAR_SHAPE = (dims.scalar,)
 
 
 def _f(arr):
-    return np.asarray(arr, dtype=np.float64)
+    return asarray(arr, dtype=np.float64)
 
 
 # Transform bodies are module-level (not lambdas) so a compiled transform metric
@@ -198,8 +211,20 @@ def _tb_abs(s, e, p): return np.abs(_f(s))
 def _tb_mirror_kde(s, e, p): return _mirror_kde(s)
 def _tb_abs_kde(s, e, p): return _abs_kde(s)
 def _tb_value_kde(s, e, p): return _value_kde(s)
-def _tb_mean_abs(s, e, p): return _summary(np.abs(_finite(s)))
-def _tb_rmse(s, e, p): return float(np.sqrt(_summary(_finite(s) ** 2)))
+def _tb_mean_abs(s, e, p): return _stream_summary(s, square=False)
+def _tb_rmse(s, e, p): return float(np.sqrt(_stream_summary(s, square=True)))
+
+
+def _stream_summary(value, square=False):
+    if not isinstance(value, BatchedArray):
+        v = _finite(value)
+        return _summary(v ** 2 if square else np.abs(v))
+    total, count = 0., 0
+    for _, _, v in blocks(value):
+        v = v[np.isfinite(v)]
+        total += float(np.sum(v * v if square else np.abs(v)))
+        count += v.size
+    return total / count if count else float("nan")
 
 
 def _summary(v):

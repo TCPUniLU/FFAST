@@ -69,6 +69,9 @@ def framesShaped(flat, offsets, variable):
 def _readOnly(array):
     """A view that refuses writes. All-frames arrays are kept and shared, so
     a caller that changed one in place would change it for everyone."""
+    from ffast.io.batched import BatchedArray
+    if isinstance(array, BatchedArray):
+        return array
     view = np.asarray(array).view()
     view.flags.writeable = False
     return view
@@ -919,6 +922,9 @@ class DatasetView(DatasetLoader):
         same = self._sameAtoms()
         if same is not None:
             return same
+        from ffast.io.batched import BatchedArray
+        if isinstance(self.parent.getAllElements(), BatchedArray):
+            return np.flatnonzero(np.isin(self.parent.getElements(frame), self.elements))
         offsets = np.asarray(self.parent.getOffsets())
         return np.flatnonzero(self._keptFlat()[int(offsets[frame]):int(offsets[frame + 1])])
 
@@ -1081,23 +1087,54 @@ class DatasetView(DatasetLoader):
             if self.elements is not None:
                 # Kept atoms before each parent atom: a frame's count is the
                 # difference at its two ends, zero for a frame without them.
-                kept = np.concatenate([[0], np.cumsum(self._keptFlat())])
-                counts = kept[offsets[frames + 1]] - kept[offsets[frames]]
+                from ffast.io.batched import BatchedArray
+                if isinstance(self.parent.getAllElements(), BatchedArray):
+                    counts = np.array([len(self._atomsOf(int(f))) for f in frames], dtype=np.int64)
+                else:
+                    kept = np.concatenate([[0], np.cumsum(self._keptFlat())])
+                    counts = kept[offsets[frames + 1]] - kept[offsets[frames]]
             else:
                 counts = offsets[frames + 1] - offsets[frames]
         return _readOnly(np.concatenate([[0], np.cumsum(counts)]).astype(np.int64))
 
     def getAllElements(self):
-        return _readOnly(np.asarray(self.parent.getAllElements())[self._flatIndex()])
+        return self._allFromParent("getAllElements")
 
     def getAllCoordinates(self):
-        return _readOnly(np.asarray(self.parent.getAllCoordinates())[self._flatIndex()])
+        return self._allFromParent("getAllCoordinates")
 
     def getAllForces(self):
-        return _readOnly(np.asarray(self.parent.getAllForces())[self._flatIndex()])
+        return self._allFromParent("getAllForces")
 
     def getAllEnergies(self):
-        return _readOnly(np.asarray(self.parent.getAllEnergies())[self._parentFrames()])
+        return _readOnly(self.parent.getAllEnergies()[self._parentFrames()])
+
+    def _allFromParent(self, method):
+        from ffast.io.batched import BatchedArray
+        values = getattr(self.parent, method)()
+        if not isinstance(values, BatchedArray):
+            return _readOnly(np.asarray(values)[self._flatIndex()])
+        frames = self._parentFrames()
+        offsets = np.asarray(self.getOffsets())
+        parent_offsets = np.asarray(self.parent.getOffsets())
+
+        def read(a, b):
+            out = np.empty((b - a, *values.shape[1:]), dtype=values.dtype)
+            first = max(0, int(np.searchsorted(offsets, a, side="right")) - 1)
+            for i in range(first, len(frames)):
+                if offsets[i] >= b:
+                    break
+                lo, hi = max(a, offsets[i]), min(b, offsets[i + 1])
+                if lo >= hi:
+                    continue
+                frame = int(frames[i])
+                data = np.asarray(values[parent_offsets[frame]:parent_offsets[frame + 1]])
+                if self.isAtomFiltered:
+                    data = data[self._atomsOf(frame)]
+                out[lo - a:hi - a] = data[lo - offsets[i]:hi - offsets[i]]
+            return out
+
+        return BatchedArray((int(offsets[-1]), *values.shape[1:]), values.dtype, read)
 
     @property
     def molecule_offsets(self):

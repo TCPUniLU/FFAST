@@ -369,6 +369,14 @@ class DataService:
             return self.metricExecutor.run(metric_id, source, params or {})
         return self.metricExecutor.run(metric_id, source, params or {}, key_out=key_out)
 
+    def compute_colour_metric(self, metric_id, params, model, dataset, *,
+                              stopped=None, key_out=None):
+        """Exact colour bounds with bounded values read only for visible frames."""
+        from ffast.metrics.input_resolver import _ResolverSource
+        source = _ResolverSource(self.inputResolver, model, dataset, stopped=stopped)
+        run = getattr(self.metricExecutor, "run_colouring", self.metricExecutor.run)
+        return run(metric_id, source, params or {}, key_out=key_out)
+
     def _generate_metric_once(self, metric_id, params, model, dataset, key, revision):
         """One attempt of ``generateMetric``: the stored key, None, or ``_CHANGED``."""
         from ffast.metrics.models import MetricResult

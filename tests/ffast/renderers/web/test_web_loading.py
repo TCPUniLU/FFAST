@@ -34,6 +34,27 @@ async def _sent(page, event):
         "(e) => window.__sent.filter(([name]) => name === e).map(([, kw]) => kw)", event)
 
 
+async def test_web_memory_saving_mode_loads_and_forwards_the_choice(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.evaluate(_RECORD_SENDS)
+            await _file_menu(page, "Load Dataset…")
+            await _go_to(page, DATASET_PATH.parent)
+            await page.locator("#fb-list .fb-row", has_text="dataset.xyz").click()
+            await page.get_by_label("Memory", exact=True).select_option("saving")
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=30000)
+            assert (await _sent(page, "LOAD_DATASET"))[-1] == {"memory_mode": "saving"}
+        finally:
+            await browser.close()
+
+
 async def test_web_the_type_list_is_the_servers_and_follows_the_file(shared_server, tmp_path):
     ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)

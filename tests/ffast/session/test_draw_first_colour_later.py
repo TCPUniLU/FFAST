@@ -93,6 +93,34 @@ def test_the_scene_comes_at_once_with_frame_colours_and_the_final_ones_follow():
     assert env.compute_calls == [METRIC]
 
 
+def test_3d_colours_use_the_range_store_without_requesting_full_results():
+    env = _env()
+    env.data.make_metric_cache_key = lambda mid, params, model, ds: (
+        f"{mid}__{model.fingerprint if model else 'nil'}__{ds.fingerprint}")
+    env.data.compute_colour_metric = env.data.compute_metric
+    def no_full_result(*args, **kwargs):
+        raise AssertionError("3D colouring must not request a full metric result")
+    env.data.compute_metric = no_full_result
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "v1"})
+        s.outbound.get_nowait()
+        _colour_by(s.views["v1"])
+        with patch("ffast.visualization.scene_builder.build_scene", _fake_build_scene):
+            await _colour_command(s)
+            _messages(s)
+            await s.colours_settled()
+        return _messages(s)
+
+    patch_later, = _patches(_run(scenario()))
+    assert patch_later["atoms"]["color_by"]["values"] == [9.0]
+    assert env.results.peek(METRIC, {}, "ds1", "m1") is None
+    assert env.results.colours.peek(METRIC, {}, "ds1", "m1") is not None
+    env.results.forget_objects("ds1")
+    assert env.results.colours.peek(METRIC, {}, "ds1", "m1") is None
+
+
 def test_a_late_result_does_not_overwrite_a_newer_colouring():
     env = _env()
 

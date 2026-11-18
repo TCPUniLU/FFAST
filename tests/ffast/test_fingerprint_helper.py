@@ -46,3 +46,15 @@ def test_bytes_hash_like_the_same_text():
     """NequIP model metadata may arrive as bytes or as text; same content,
     same fingerprint either way."""
     assert md5FromArraysAndStrings(b"abc") == md5FromArraysAndStrings("abc")
+
+
+def test_known_batched_fingerprints_survive_reshape_without_reading():
+    import hashlib
+    from ffast.io.batched import BatchedArray
+
+    values = np.arange(12.0).reshape(4, 3)
+    def fail(*args):
+        raise AssertionError("Fingerprint already established at load time")
+    column = BatchedArray(values.shape, values.dtype, fail,
+                          digest=hashlib.md5(values).hexdigest())
+    assert md5FromArraysAndStrings(column.reshape(-1), "model") == md5FromArraysAndStrings(values, "model")

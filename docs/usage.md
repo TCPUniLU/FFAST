@@ -128,6 +128,65 @@ energy, below), name its stored units, then Load. Energy and force columns are
 selected automatically when unambiguous; otherwise the dialog asks which
 columns to use. Naming units does not convert values.*
 
+### Large XYZ files
+
+For `.xyz` and `.extxyz`, **Memory ▸ Automatic** keeps parsed arrays in RAM
+when they fit, and switches to memory-saving storage for larger datasets.
+Choose **Save memory** to force that mode. All selected frames remain available;
+this setting does not sample the dataset. The optional Rust parser is used in
+both modes.
+
+Memory-saving storage keeps the frame index and a bounded cache. An uncached
+molecule is read from its byte range in the original file. An optional parsed
+disk cache makes repeated access faster; a full or unwritable cache falls back
+to the source file. The first open still scans the data for its fingerprint.
+Keep the source unchanged while it is open; a changed file requires a reload.
+Predictions from columns in that same file reuse the scanned columns and
+fingerprints, including when loaded later through the prediction dialog.
+
+Large full-file XYZ loads can index and parse bounded windows concurrently
+with the optional fast parser. Small, frequently reused scalar columns stay
+in the shared RAM budget. If disk space cannot hold all parsed fields, the
+cache keeps per-frame values, cell and species first, then forces, then
+positions; anything left out is read from the source file. Saved batch boundaries stay valid when available RAM changes.
+
+Built-in analyses, prediction batches and XYZ export process bounded batches.
+Large results can spill to disk. An operation that cannot fit its working data
+or result is refused while the dataset stays open. External metrics and model
+implementations still need to respect their input and working-memory limits.
+Downloading a whole metric through the existing bulk CSV/RPC interface can
+require that result to fit RAM; plot previews are thinned in batches.
+
+Set server-wide limits in `ffast.toml` before starting the server, in bytes:
+
+```toml
+[resources]
+ram_bytes = 4294967296          # 4 GiB shared by datasets, caches and active work
+parsed_cache_bytes = 21474836480 # 20 GiB; 0 disables parsed disk caching
+result_cache_bytes = 21474836480 # 20 GiB; 0 disables result spill
+```
+
+Without overrides, RAM admission uses 80% of available laptop memory, or 85%
+of remaining cgroup/Slurm memory, leaving at least 512 MiB of headroom when
+available. These limits account for managed arrays and work reservations;
+Python, model libraries and index metadata also consume process memory.
+The automatic RAM cap is chosen when the budget is created; it does not grow
+when another application exits. New allocations also check current free
+memory, and cached batches can be evicted under pressure.
+Leave extra room for external model workspaces. An unknown Slurm allocation
+requires an explicit RAM setting.
+
+Environment equivalents are `FFAST_MEMORY_BYTES`, `FFAST_PARSED_CACHE_BYTES`
+and `FFAST_RESULT_CACHE_BYTES`; explicit project settings take precedence.
+Parsed data defaults to `~/.ffast/frame-arrays` (`FFAST_FRAME_ARRAYS_DIR`);
+result files default to its `results` folder (`FFAST_RESULT_CACHE_DIR`). Use
+disk storage for result spill. Both disk budgets default to 20 GiB; available
+disk space can impose a smaller limit.
+
+The CLI accepts `ffast-cli metrics run … --memory-mode saving`. Other formats
+retain their current readers; this does not add HDF5 or TensorFlow Datasets
+support.
+
 ### Loading a sample by energy
 
 A long trajectory holds many similar low-energy frames and few high-energy
@@ -277,8 +336,11 @@ The sidebar panes:
   leniency, or fixed bonds.
 - **Colour By** — elements, displacement, or any per-atom or per-element metric
   such as force error, with a choice of colormap and a colourbar. The metric is
-  computed over the whole dataset, as the plots compute it, so the colourbar's
+  scanned in batches for its exact minimum and maximum, so the colourbar's
   range covers every frame and a colour means the same error in each frame.
+  3D colouring caches that range and calculates values for the visible frame;
+  it does not save a colour array for the whole trajectory. Changing frames
+  reuses the range. The first calculation still reads all relevant values.
   Type a minimum or maximum to fix the range yourself. With a prediction that
   covers only the frame on screen, the colouring uses that frame and the
   colourbar says "this frame". Metric parameters appear under the picker when

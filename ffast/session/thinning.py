@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from ffast.io.batched import BatchedArray, asarray, blocks
 
 # A series with no more values than this is sent and drawn whole (thin.js).
 THIN_ABOVE = 20000
@@ -72,6 +73,8 @@ def thin_line(xs, ys, x_range, columns) -> np.ndarray | None:
     ``xs`` ascending; ``x_range`` the x range shown, or None for all;
     ``columns`` the plot's width in pixels.
     """
+    if isinstance(xs, BatchedArray) or isinstance(ys, BatchedArray):
+        return _stream_line(asarray(xs), asarray(ys), x_range, columns)
     xs = np.asarray(xs, dtype=float)
     ys = np.asarray(ys, dtype=float)
     n = min(len(xs), len(ys))
@@ -129,6 +132,8 @@ def thin_points(xs, ys, x_range, y_range, width, height, cell=2) -> np.ndarray |
     """The indices of dots to draw, ascending, or None to draw all: one per
     cell of ``cell`` px over a plot of ``width`` x ``height`` px. ``x_range``
     and ``y_range`` are what is shown; None for all."""
+    if isinstance(xs, BatchedArray) or isinstance(ys, BatchedArray):
+        return _stream_points(asarray(xs), asarray(ys), x_range, y_range, width, height, cell)
     xs = np.asarray(xs, dtype=float)
     ys = np.asarray(ys, dtype=float)
     n = min(len(xs), len(ys))
@@ -145,4 +150,88 @@ def thin_points(xs, ys, x_range, y_range, width, height, cell=2) -> np.ndarray |
         bx = tuple(sorted(x_range)) if x_range is not None else ex
         by = tuple(sorted(y_range)) if y_range is not None else ey
         keep.append(_grid_cells(xs, ys, bx, by, cols, rows))
+    return np.unique(np.concatenate(keep)).astype(np.int32)
+
+
+def _search(values, target):
+    a, b = 0, len(values)
+    while a < b:
+        mid = (a + b) // 2
+        if values[mid] < target:
+            a = mid + 1
+        else:
+            b = mid
+    return a
+
+
+def _stream_line(xs, ys, x_range, columns):
+    n = min(len(xs), len(ys))
+    columns = max(1, _js_round(columns))
+    if n <= THIN_ABOVE or n <= 4 * columns:
+        return None
+    previous = -np.inf
+    for _, _, x in blocks(xs):
+        if len(x) and (x[0] < previous or np.any(x[1:] < x[:-1])):
+            return None
+        if len(x):
+            previous = x[-1]
+
+    def scan(start, end, x0, x1):
+        kept = np.zeros(0, dtype=np.int64)
+        for offset, _, x in blocks(xs[start:end]):
+            offset += start
+            y = np.asarray(ys[offset:offset + len(x)])
+            candidates = _line_columns(x, y, 0, len(x), x0, x1, columns) + offset
+            candidates = np.unique(np.concatenate((kept, candidates)))
+            cx, cy = np.asarray(xs[candidates]), np.asarray(ys[candidates])
+            kept = candidates[_line_columns(cx, cy, 0, len(cx), x0, x1, columns)]
+        return kept
+
+    keep = [scan(0, n, xs[0], xs[n - 1])]
+    if x_range is not None:
+        a, b = sorted(x_range)
+        start, end = max(0, _search(xs, a) - 1), min(n, _search(xs, b) + 2)
+        keep.append(np.arange(start, end) if end - start <= 4 * columns else scan(start, end, a, b))
+    return np.unique(np.concatenate(keep)).astype(np.int32)
+
+
+def _stream_points(xs, ys, x_range, y_range, width, height, cell):
+    n = min(len(xs), len(ys))
+    if n <= THIN_ABOVE:
+        return None
+    cols, rows = max(1, _js_round(width / cell)), max(1, _js_round(height / cell))
+
+    def extent(value):
+        lo, hi = np.inf, -np.inf
+        found = False
+        for _, _, v in blocks(value[:n]):
+            v = v[~np.isnan(v)]
+            if v.size:
+                lo, hi, found = min(lo, v.min()), max(hi, v.max()), True
+        return (lo, hi) if found else None
+
+    ex, ey = extent(xs), extent(ys)
+    if ex is None or ey is None:
+        return None
+
+    def scan(bx, by):
+        from ffast.io.budget import budget
+        budget().check(cols * rows * 16)
+        first = np.full(cols * rows, -1, dtype=np.int64)
+        for a, b, x in blocks(xs[:n]):
+            y = np.asarray(ys[a:b])
+            idx = _grid_cells(x, y, bx, by, cols, rows)
+            c = (np.minimum(cols - 1, np.floor((x[idx] - bx[0]) / (bx[1] - bx[0]) * cols))
+                 if bx[1] > bx[0] else np.zeros(len(idx)))
+            r = (np.minimum(rows - 1, np.floor((y[idx] - by[0]) / (by[1] - by[0]) * rows))
+                 if by[1] > by[0] else np.zeros(len(idx)))
+            grid = (r * cols + c).astype(np.int64)
+            empty = first[grid] < 0
+            first[grid[empty]] = idx[empty] + a
+        return first[first >= 0]
+
+    keep = [scan(ex, ey)]
+    if x_range is not None or y_range is not None:
+        keep.append(scan(tuple(sorted(x_range)) if x_range is not None else ex,
+                         tuple(sorted(y_range)) if y_range is not None else ey))
     return np.unique(np.concatenate(keep)).astype(np.int32)

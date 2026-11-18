@@ -22,10 +22,11 @@ def uniformFrames(dataset, indices=None):
     from ffast.loaders.dataset import stackFrames
 
     offsets = dataset.getOffsets()
-    R = stackFrames(dataset.getAllCoordinates(), offsets)
     if indices is not None:
-        R = R[indices]
-    return R, dataset.getAllElements()[:offsets[1]]
+        R = np.asarray(dataset.getCoordinates(indices))
+    else:
+        R = stackFrames(dataset.getAllCoordinates(), offsets)
+    return R, dataset.getElements(0)
 
 
 class ModelLoader(EventClass):

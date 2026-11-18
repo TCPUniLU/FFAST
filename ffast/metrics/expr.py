@@ -56,6 +56,7 @@ from __future__ import annotations
 import ast
 
 import numpy as np
+from ffast.io.batched import BatchedArray, asarray
 
 from ffast.metrics import dims, units
 from ffast.metrics.inputs import MISSING_SUFFIX, RAW_INPUT_BY_REF, parse_field_ref, parse_missing_ref
@@ -743,25 +744,25 @@ class _ExprFn:
         if isinstance(node, ast.Subscript):
             a, k, g = self._eval(node.value, ns)
             pos = _positions(node, self.expr)
-            return np.asarray(a)[(..., *pos)], 0, g
+            return asarray(a)[(..., *pos)], 0, g
         if isinstance(node, ast.Call):
             name = node.func.id
             if name in _REDUCERS:
                 return self._reduce(node, ns)
             if name == _ELEMENT:
                 wanted = [element_numbers()[a.value] for a in node.args]
-                return np.isin(np.asarray(ns[_ELEMENTS]), wanted).astype(float), 0, None
+                return np.isin(asarray(ns[_ELEMENTS]), wanted).astype(float), 0, None
             evald = [self._eval(a, ns) for a in node.args]
             if name in _COLLAPSING:
                 a, k, g = evald[0]
-                arr = np.asarray(a, dtype=float)
+                arr = asarray(a, dtype=float)
                 axes = tuple(range(-k, 0))
                 if name == "norm":
                     return np.sqrt(np.sum(arr * arr, axis=axes)), 0, g
                 return _PART_REDUCERS[name](arr, axis=axes), 0, g
             if name in _XYZ_INDEX:
                 a, _k, g = evald[0]
-                return np.asarray(a)[..., _XYZ_INDEX[name]], 0, g
+                return asarray(a)[..., _XYZ_INDEX[name]], 0, g
             gap = None
             for _v, _k, g in evald:
                 gap = _either(gap, g)
@@ -772,11 +773,11 @@ class _ExprFn:
     def _input(self, name, ns):
         value, k = ns[name], self.var_parts.get(name, 0)
         if name in self.gap_inputs:
-            arr = np.asarray(value, dtype=float)
+            arr = asarray(value, dtype=float)
             gap = np.isnan(arr)
         elif ns.get(MISSING_PREFIX + name) is not None:
-            arr = np.asarray(value, dtype=float)
-            gap = np.asarray(ns[MISSING_PREFIX + name], dtype=bool)
+            arr = asarray(value, dtype=float)
+            gap = asarray(ns[MISSING_PREFIX + name], dtype=bool)
         else:
             return value, k, None
         if k:
@@ -791,13 +792,16 @@ class _ExprFn:
         makes its group bad."""
         name = node.func.id
         value, k, gap = self._eval(node.args[0], ns)
-        v = np.asarray(value, dtype=float)
+        if isinstance(value, BatchedArray):
+            from ffast.metrics.streaming import expression_reduction
+            return expression_reduction(self, node, ns, value, k, gap)
+        v = asarray(value, dtype=float)
         rows = v.shape[0]
         counted = np.ones(rows, dtype=bool) if gap is None else ~np.broadcast_to(gap, (rows,))
         where = _keyword(node, "where")
         if where is not None:
             w, _wk, wgap = self._eval(where, ns)
-            w = np.broadcast_to(np.asarray(w, dtype=float), (rows,))
+            w = np.broadcast_to(asarray(w, dtype=float), (rows,))
             # A bad value in where= is neither 1 nor 0: the row counts and is
             # made bad, so its group fails rather than being quietly decided.
             w_bad = ~np.isfinite(w)
@@ -823,8 +827,10 @@ class _ExprFn:
             offsets = np.concatenate([[0], np.cumsum(np.bincount(index, minlength=size))])
         elif by in ("element", PAIR):
             # Columns: every element of the dataset, in order of atomic number.
-            z = np.asarray(ns[_ELEMENTS])
-            columns = np.unique(z)
+            z = asarray(ns[_ELEMENTS])
+            columns = ns.get("_stream_columns")
+            if columns is None:
+                columns = np.unique(z)
             index = np.searchsorted(columns, z)
             size = columns.size
             if by == PAIR:
@@ -880,17 +886,22 @@ class _ExprFn:
         if k:
             bad = bad.any(axis=tuple(range(-k, 0)))
         rows = np.flatnonzero(left_out & bad)
+        seen = ns.get("_stream_ignored_seen")
+        if seen is not None:
+            base = ns.get("_row_base", 0)
+            rows = np.array([r for r in rows if base + int(r) not in seen], dtype=int)
+            seen.update(base + int(r) for r in rows)
         if not rows.size:
             return
         offsets = ns.get(_OFFSETS)
         frames = []
         if offsets is not None:
-            offsets = np.asarray(offsets)
+            offsets = asarray(offsets)
             if v.shape[0] == offsets[-1]:            # per atom
                 frames = np.searchsorted(offsets, rows, side="right") - 1
             elif v.shape[0] == offsets.size - 1:     # per structure
                 frames = rows
-        ns[_IGNORED].append((int(rows.size), [int(f) for f in frames]))
+        ns[_IGNORED].append((int(rows.size), [int(f) + ns.get("_frame_base", 0) for f in frames]))
 
     def evaluate_split(self, /, **kwargs):
         """``(values, gap, ignored)``: the formula's values, NaN where there is
@@ -899,16 +910,21 @@ class _ExprFn:
         left in; a metric run rejects them in ``__call__``, Try counts them."""
         ns = {**kwargs, _IGNORED: []}
         out, k, gap = self._eval(self._tree(), ns)
-        ignored = None
-        if ns[_IGNORED]:
-            frames = sorted({f for _n, fs in ns[_IGNORED] for f in fs})
-            ignored = {"count": sum(n for n, _fs in ns[_IGNORED]), "frames": frames}
-        arr = np.asarray(out)
+        arr = asarray(out)
         arr = arr.astype(float) if arr.dtype == bool else arr
         if gap is not None:
             gap = np.broadcast_to(gap, arr.shape[:arr.ndim - k])
-            arr = np.array(arr, dtype=float)
-            arr[gap] = np.nan
+            arr = np.where(gap.reshape(gap.shape + (1,) * k), np.nan, arr)
+        if isinstance(arr, BatchedArray):
+            from ffast.io.result_array import store_result
+            arr = store_result(arr)
+        def ignored_now():
+            if not ns[_IGNORED]:
+                return None
+            frames = sorted({f for _n, fs in ns[_IGNORED] for f in fs})
+            return {"count": sum(n for n, _fs in ns[_IGNORED]), "frames": frames}
+        from ffast.metrics.colouring import deferring_results
+        ignored = ignored_now if deferring_results() and isinstance(arr, BatchedArray) else ignored_now()
         return arr, gap, ignored
 
     def evaluate(self, /, **kwargs):
@@ -920,9 +936,22 @@ class _ExprFn:
         # ``self`` is positional-only so an Expression Variable legitimately named
         # ``self`` (bound via ``fn(**resolved_inputs)``) cannot collide with it.
         arr, gap, ignored = self.evaluate_split(**kwargs)
+        from ffast.metrics.colouring import deferring_results, checked_expression
+        if deferring_results() and isinstance(arr, BatchedArray):
+            def warnings():
+                notes = []
+                for value in kwargs.values():
+                    provider = getattr(value, "_colour_warnings", None)
+                    if provider is not None:
+                        notes.extend(provider())
+                found = ignored() if callable(ignored) else ignored
+                if found:
+                    notes.append(ignored_warning(found["count"], found["frames"]))
+                return list(dict.fromkeys(notes))
+            return checked_expression(arr, gap, self.expr, warnings)
         bad = ~np.isfinite(arr)
         if gap is not None:
-            bad &= ~gap.reshape(gap.shape + (1,) * (arr.ndim - gap.ndim))
+            bad = bad & ~gap.reshape(gap.shape + (1,) * (arr.ndim - gap.ndim))
         if np.any(bad):
             # Decision 7: a Metric never returns silent inf/nan. Raising here
             # surfaces as a Metric Failure naming this metric (per the executor).
@@ -948,7 +977,7 @@ def _align(values):
     """Values ready for numpy: one without parts gets a trailing axis per part
     of the widest, so each atom's value applies to all its parts."""
     k = max(kv for _v, kv in values)
-    return [np.asarray(v).reshape(np.shape(v) + (1,) * (k - kv))
+    return [asarray(v).reshape(np.shape(v) + (1,) * (k - kv))
             if kv < k and np.ndim(v) > 0 else v for v, kv in values]
 
 
@@ -958,7 +987,7 @@ def _check_same_atoms(frames, elements) -> None:
     sizes = np.diff(frames)
     same = sizes.size == 0 or bool(np.all(sizes == sizes[0]))
     if same and elements is not None and sizes.size > 1:
-        z = np.asarray(elements).reshape(sizes.size, sizes[0])
+        z = asarray(elements).reshape(sizes.size, sizes[0])
         same = bool(np.all(z == z[0]))
     if not same:
         raise ValueError(

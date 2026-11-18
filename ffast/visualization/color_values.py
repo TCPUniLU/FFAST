@@ -9,9 +9,9 @@ is one of:
 
 - ``element`` / unset    → ``None`` (renderer falls back to element colors)
 - ``displacement``       → per-atom RMS displacement over the trajectory
-- ``metric:<metric_id>`` → the metric over the whole dataset, as the 2D plots
-  compute and store it, cut to the frame on screen; the colour range then
-  covers every frame. When the whole dataset can't be computed from what is
+- ``metric:<metric_id>`` → exact bounds over the whole dataset, with values
+  calculated only for the frame on screen. A full result already computed by
+  a 2D plot can also be reused. When the whole dataset can't be computed from what is
   loaded (a prediction not made for every frame), the metric runs on the
   current frame's inputs only.
 
@@ -243,18 +243,22 @@ def _whole_dataset_values(get_metric, metric_id, params, shape, ds, idx, z, data
         return None
     # No float64 copy of the whole result: on 1.77M structures it is 213M
     # values, and only the frame's few are needed.
-    vals = np.asarray(result.values).reshape(-1)
+    from ffast.io.batched import asarray
+    vals = asarray(result.values).reshape(-1)
     zarr = np.asarray(z).ravel()
+    def catalogue():
+        known = getattr(result, "_colour_elements", None)
+        return known if known is not None else np.unique(asarray(ds.getAllElements()))
     if shape == "(N_frames, N_elements)":
         # A row per structure, a column per element of the dataset (ADR 0064
         # amendment): the frame on screen reads its row.
-        unique_z = np.unique(np.asarray(ds.getAllElements()))
+        unique_z = catalogue()
         if len(unique_z) == 0 or len(vals) % len(unique_z):
             return None
         row = vals.reshape(-1, len(unique_z))[idx]
         frame = row[np.searchsorted(unique_z, zarr)]
     elif shape == "N_elements":
-        unique_z = np.unique(np.asarray(ds.getAllElements()))
+        unique_z = catalogue()
         if len(vals) != len(unique_z):
             return None
         frame = vals[np.searchsorted(unique_z, zarr)]
@@ -268,7 +272,8 @@ def _whole_dataset_values(get_metric, metric_id, params, shape, ds, idx, z, data
             return None
     else:
         return None
-    return np.asarray(frame, dtype=np.float64), _span_of(result, vals)
+    span = result._colour_span if getattr(result, "_colour_only", False) else _span_of(result, vals)
+    return np.asarray(frame, dtype=np.float64), span
 
 
 # The (lowest, highest) of a stored result, by its tag (MetricCache.put): a
@@ -290,6 +295,20 @@ def _span_of(result, vals) -> tuple[float, float] | None:
                 _SPANS.move_to_end(tag)
                 return _SPANS[tag]
     span = None
+    from ffast.io.batched import BatchedArray, blocks
+    if isinstance(vals, BatchedArray):
+        lo, hi = np.inf, -np.inf
+        for _, _, values in blocks(vals):
+            finite = values[np.isfinite(values)]
+            if finite.size:
+                lo, hi = min(lo, finite.min()), max(hi, finite.max())
+        span = (float(lo), float(hi)) if np.isfinite(lo) and np.isfinite(hi) else None
+        if tag is not None:
+            with _SPANS_LOCK:
+                _SPANS[tag] = span
+                while len(_SPANS) > _SPANS_KEEP:
+                    _SPANS.popitem(last=False)
+        return span
     if vals.size:
         # fmin/fmax skip NaN without copying the values.
         lo, hi = float(np.fmin.reduce(vals)), float(np.fmax.reduce(vals))

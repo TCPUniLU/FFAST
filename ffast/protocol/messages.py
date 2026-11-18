@@ -301,6 +301,7 @@ class LoadDatasetRequest(BaseModel):
     # Load a sample by energy (ADR 0096): {method, n, bins, seed, energy};
     # only ``n`` is required. Never together with every n-th frame.
     sampling: Optional[dict] = None
+    memory_mode: Literal["auto", "saving"] = "auto"
 
     @model_validator(mode="after")
     def _sample_or_stride(self):

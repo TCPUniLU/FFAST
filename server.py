@@ -707,6 +707,8 @@ async def _main(
     from ffast.protocol.rpc import SERVER_TO_CLIENT, pack
     from ffast.core.plugin_discovery import loadModules
 
+    from ffast.config.loader import configure_resources
+    configure_resources(_discover_project_config(config))
     env = HeadlessEnvironment()
     # Where the web file browser starts: the start folder by default.
     env.workdir = workdir or os.getcwd()

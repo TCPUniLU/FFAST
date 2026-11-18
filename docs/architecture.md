@@ -86,6 +86,31 @@ an install marker to avoid repeating unchanged setup. The default,
 environment (ADR 0028). Sessions survive disconnects; the cluster dialog
 reconnects to a still-running job rather than starting a new one (ADR 0024).
 
+## Large XYZ datasets
+
+XYZ storage has two paths behind the same dataset interface (ADR 0102).
+Small files retain joined NumPy arrays. Large files expose `BatchedArray`
+columns backed by `readers/indexed.py`: shared RAM batches, an optional parsed
+disk cache, then reads from the original indexed XYZ. Both use the existing
+Rust parser when installed. Cached batch slices and result arrays use explicit
+buffered I/O rather than mapping the original text.
+
+`io/budget.py` admits owned arrays and active work against one server RAM
+limit. `metrics/streaming.py` executes supported kernels and expression
+reductions in batches; `io/result_array.py` stores oversized results within a
+separate disk budget. Views select before materializing, and plot thinning,
+prediction and dataset export consume batches. Unknown operations retain their
+NumPy contract after a memory check. This is managed-allocation admission,
+not a hard process RSS cap. Format-specific indexing and parsing remain in
+readers; HDF5 and TFDS readers are outside this change.
+
+3D colouring uses a separate range cache. It scans a virtual metric result
+for exact finite min/max, retains the bounds and a recipe for frame reads,
+and evaluates only the visible frame when it changes. This scan does not
+spill a full colour array. Full plot results, if already available, can be
+reused; otherwise they are requested separately. The same result-store
+lifecycle handles coalescing, cancellation, deletion and changing live data.
+
 ## Two things are declarative rather than coded
 
 Both grew out of the same observation: most requests for "a new plot" were the

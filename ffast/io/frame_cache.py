@@ -34,11 +34,20 @@ _META = "meta.json"
 
 def max_bytes(folder):
     """At most MAX_BYTES, and at most a quarter of the disk's free space."""
+    from ffast.io.budget import budget
+    maximum = min(MAX_BYTES, budget().parsed_limit)
+    # Incremental and complete-array entries use the same parsed disk budget.
+    try:
+        batches = sum(p.stat().st_size for p in (Path(folder) / "batches").iterdir()
+                      if p.suffix in (".npz", ".json"))
+    except OSError:
+        batches = 0
+    maximum = max(0, maximum - batches)
     try:
         free = shutil.disk_usage(folder).free
     except OSError:
-        return MAX_BYTES
-    return min(MAX_BYTES, free // 4)
+        return maximum
+    return min(maximum, free // 4)
 
 
 def _key(index):
@@ -138,6 +147,8 @@ def _make_room(folder, budget):
     Half-written entries (no meta.json) older than an hour go too."""
     entries = []
     for entry in folder.iterdir():
+        if entry.name in ("batches", "results"):
+            continue
         if not entry.is_dir():
             continue
         meta = entry / _META

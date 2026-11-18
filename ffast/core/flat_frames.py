@@ -1,4 +1,5 @@
 import numpy as np
+from ffast.io.batched import asarray
 
 
 class FlatFrames:
@@ -6,7 +7,7 @@ class FlatFrames:
     every atom frame after frame, and ``offsets``, where each frame starts."""
 
     def __init__(self, values, offsets):
-        values = np.asarray(values)
+        values = asarray(values)
         offsets = np.asarray(offsets, dtype=np.int64)
         if (offsets.ndim != 1 or len(offsets) == 0 or offsets[0] != 0
                 or np.any(np.diff(offsets) < 0) or offsets[-1] != len(values)):

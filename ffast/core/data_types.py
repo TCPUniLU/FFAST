@@ -280,7 +280,8 @@ class EnergyPredictionData(DataType):
         service = self.service
 
         if model.singlePredict:
-            (e, f) = model.predict(dataset, taskID=taskID)
+            from ffast.readers.predict_batches import predict
+            (e, f) = predict(model, dataset, taskID)
             fData = self.newDataEntity(forces=FlatFrames.of(f))
             service.setData(fData, "forces", model=model, dataset=dataset)
 
@@ -313,7 +314,8 @@ class ForcesPredictionData(DataType):
         service = self.service
 
         if model.singlePredict:
-            (e, f) = model.predict(dataset, taskID=taskID)
+            from ffast.readers.predict_batches import predict
+            (e, f) = predict(model, dataset, taskID)
             eData = self.newDataEntity(energy=e)
             service.setData(eData, "energy", model=model, dataset=dataset)
 

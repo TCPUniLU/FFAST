@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from ffast.io.batched import BatchedArray, asarray, blocks
 
 FRAME_KINDS = ("timeline", "overlay_timeline")
 
@@ -36,6 +37,14 @@ def _span(r):
 
 def points_in_box(x, y, x_range, y_range) -> np.ndarray:
     """Indices of the points inside the box."""
+    if isinstance(x, BatchedArray) or isinstance(y, BatchedArray):
+        x, y = asarray(x).ravel(), asarray(y).ravel()
+        parts = []
+        for a, b, values in blocks(x):
+            parts.append(points_in_box(values, np.asarray(y[a:b]), x_range, y_range) + a)
+        from ffast.io.budget import budget
+        budget().check(sum(v.nbytes for v in parts))
+        return np.concatenate(parts) if parts else np.zeros(0, dtype=int)
     x = np.asarray(x, dtype=float).ravel()
     y = np.asarray(y, dtype=float).ravel()
     (x0, x1), (y0, y1) = _span(x_range), _span(y_range)
@@ -44,6 +53,11 @@ def points_in_box(x, y, x_range, y_range) -> np.ndarray:
 
 def values_in_range(values, x_range, shift: float | None = None) -> np.ndarray:
     """Indices of the values whose size, after ``shift``, lies in ``x_range``."""
+    if isinstance(values, BatchedArray):
+        parts = [values_in_range(v, x_range, shift) + a for a, _, v in blocks(values.ravel())]
+        from ffast.io.budget import budget
+        budget().check(sum(v.nbytes for v in parts))
+        return np.concatenate(parts) if parts else np.zeros(0, dtype=int)
     v = np.asarray(values, dtype=float).ravel()
     if shift is not None:
         v = v - shift

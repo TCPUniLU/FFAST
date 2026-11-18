@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from ffast.io.batched import BatchedArray, asarray, blocks
 
 from ffast.chemistry import zIntToZStr
 from ffast.readers.contract import ReaderError, warn
@@ -43,6 +44,9 @@ class Facts:
 def check_prediction(dataset, facts: Facts) -> list[str]:
     """Raise PredictionRefused when ``facts`` do not fit ``dataset``; else
     return the warnings it also sent (through ``warn``)."""
+    storage = getattr(dataset, "storage", None)
+    if storage is not None:
+        storage.check_source()
     name = facts.name
     offsets = _call(dataset, "getOffsets")
     label = _frame_label(dataset)
@@ -68,12 +72,14 @@ def check_prediction(dataset, facts: Facts) -> list[str]:
 
         elements = _call(dataset, "getAllElements")
         if facts.numbers is not None and elements is not None:
-            numbers = np.asarray(facts.numbers)
-            elements = np.asarray(elements)
-            if numbers.shape == elements.shape:
-                differ = np.flatnonzero(numbers != elements)
-                if differ.size:
-                    k = int(differ[0])
+            numbers = asarray(facts.numbers)
+            elements = asarray(elements)
+            if numbers.shape == elements.shape and not _same_content(numbers, elements):
+                for a, b, values in blocks(numbers):
+                    differ = np.flatnonzero(values != np.asarray(elements[a:b]))
+                    if not differ.size:
+                        continue
+                    k = int(differ[0]) + a
                     frame = int(np.searchsorted(offsets, k, side="right") - 1)
                     raise PredictionRefused(
                         f"Element mismatch for prediction '{name}': in frame {label(frame)}, "
@@ -83,15 +89,20 @@ def check_prediction(dataset, facts: Facts) -> list[str]:
     problems = []
     positions = _call(dataset, "getAllCoordinates")
     if facts.positions is not None and positions is not None and offsets is not None:
-        theirs, mine = np.asarray(positions), np.asarray(facts.positions)
-        if theirs.shape == mine.shape and mine.size:
-            gap = np.abs(mine - theirs).max(axis=1)
-            far = np.flatnonzero(gap > POSITION_TOLERANCE)
-            if far.size:
-                frame = int(np.searchsorted(offsets, far[0], side="right") - 1)
+        theirs, mine = asarray(positions), asarray(facts.positions)
+        if theirs.shape == mine.shape and mine.size and not _same_content(theirs, mine):
+            first, largest = None, 0.
+            for a, b, values in blocks(mine):
+                gap = np.abs(values - np.asarray(theirs[a:b])).max(axis=1)
+                far = np.flatnonzero(gap > POSITION_TOLERANCE)
+                if far.size and first is None:
+                    first = a + int(far[0])
+                largest = max(largest, float(gap.max()) if gap.size else 0.)
+            if first is not None:
+                frame = int(np.searchsorted(offsets, first, side="right") - 1)
                 problems.append(
                     f"Prediction '{name}': positions differ from the dataset's by up to "
-                    f"{float(gap.max()):.4f} Å (first in frame {label(frame)}). "
+                    f"{largest:.4f} Å (first in frame {label(frame)}). "
                     f"A file may round its positions.")
 
     mine = facts.units or {}
@@ -111,6 +122,15 @@ def _call(dataset, method):
     """A dataset's answer, or None when it does not have the method."""
     fn = getattr(dataset, method, None)
     return fn() if callable(fn) else None
+
+
+def _same_content(left, right):
+    """Exact identity established at load time, without another source scan."""
+    if left is right:
+        return True
+    return (isinstance(left, BatchedArray) and isinstance(right, BatchedArray)
+            and left.shape == right.shape and left.dtype == right.dtype
+            and left.digest is not None and left.digest == right.digest)
 
 
 def _frame_label(dataset):

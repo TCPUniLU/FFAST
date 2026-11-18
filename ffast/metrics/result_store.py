@@ -85,7 +85,7 @@ class MetricResultStore:
     replies, and sharing one bounded pool would deadlock.
     """
 
-    def __init__(self, env, *, threads: int = 16) -> None:
+    def __init__(self, env, *, threads: int = 16, colour_only=False) -> None:
         self._env = env
         self._pool = ThreadPoolExecutor(max_workers=threads, thread_name_prefix="ffast-metric")
         # Read by ``peek`` from any thread, so every change holds the lock.
@@ -96,6 +96,18 @@ class MetricResultStore:
         self._forgets = 0                                   # forget calls so far
         self._grown: dict[str, int] = {}                    # dataset fp → growths so far
         self._runs = 0                                      # computations started
+        self._colour_only = colour_only
+        self._colours = None
+
+    @property
+    def colours(self):
+        """Range-only computations share lifecycle, not the full-result cache."""
+        if self._colour_only or not callable(getattr(self._env.data, "compute_colour_metric", None)):
+            return self
+        with self._lock:
+            if self._colours is None:
+                self._colours = MetricResultStore(self._env, threads=4, colour_only=True)
+            return self._colours
 
     # ── reading ────────────────────────────────────────────────────────────
 
@@ -153,12 +165,16 @@ class MetricResultStore:
             return ck is not None and (ck.matches_dataset(fingerprint) or ck.matches_model(fingerprint))
 
         self._forget(gone)
+        if self._colours is not None:
+            self._colours.forget_objects(fingerprint)
 
     def dataset_grew(self, fingerprint) -> None:
         """A dataset gained frames under the same fingerprint (a live run, ADR
         0091): drop what is stored for it, and file no outcome of a computation
         of it that started before. Computations of other datasets are not touched."""
         from ffast.cache import CacheKey
+        if self._colours is not None:
+            self._colours.dataset_grew(fingerprint)
 
         def gone(key) -> bool:
             ck = CacheKey.try_parse(key)
@@ -181,6 +197,8 @@ class MetricResultStore:
         from ffast.cache import CacheKey
 
         ids = set(metric_ids)
+        if self._colours is not None:
+            self._colours.forget_metrics(ids)
 
         def gone(key) -> bool:
             ck = CacheKey.try_parse(key)
@@ -283,7 +301,8 @@ class MetricResultStore:
         with self._lock:
             forgets = self._forgets
             grown = self._grown.get(dataset_fp, 0)
-        run = _Run(threading.Event(), forgets, f"metric:{key}#{self._runs}", dataset_fp, grown)
+        kind = "colour" if self._colour_only else "metric"
+        run = _Run(threading.Event(), forgets, f"{kind}:{key}#{self._runs}", dataset_fp, grown)
 
         def work():
             if run.stop.is_set():   # left while it waited for a thread: read nothing
@@ -320,8 +339,9 @@ class MetricResultStore:
                 revision = default_registry.revision
                 key = data.make_metric_cache_key(metric_id, params, model, dataset)
                 step_key: dict = {}
-                outcome = data.compute_metric(metric_id, params, model, dataset,
-                                              stopped=run.stop.is_set, key_out=step_key)
+                compute = data.compute_colour_metric if self._colour_only else data.compute_metric
+                outcome = compute(metric_id, params, model, dataset,
+                                  stopped=run.stop.is_set, key_out=step_key)
                 if default_registry.revision != revision and not run.stop.is_set():
                     logger.info("Metric %s changed while computing; computing again", metric_id)
                     continue

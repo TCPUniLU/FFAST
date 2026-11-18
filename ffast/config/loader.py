@@ -61,3 +61,14 @@ def discover_config(start: Path) -> Path | None:
         if parent == current:
             return None
         current = parent
+
+
+def configure_resources(config):
+    """Apply explicit project budgets before the server loads any arrays."""
+    if config is None:
+        return
+    values = config.resources
+    if any(v is not None for v in values.model_dump().values()):
+        from ffast.io.budget import configure
+        configure(ram_bytes=values.ram_bytes, parsed_bytes=values.parsed_cache_bytes,
+                  result_bytes=values.result_cache_bytes)

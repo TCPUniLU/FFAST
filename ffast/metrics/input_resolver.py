@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+from ffast.io.batched import BatchedArray, asarray, mapped
 
 from ffast.core.flat_frames import FlatFrames
 from ffast.metrics.execution import InputSource
@@ -83,7 +84,7 @@ def _flatten(value):
         if len(value) == 0:
             return None
         return np.concatenate([np.asarray(v) for v in value], axis=0)
-    return np.asarray(value)
+    return asarray(value)
 
 
 def _flatPerAtom(value, axes):
@@ -98,7 +99,7 @@ def _flatPerAtom(value, axes):
         return _flatten(value)
     if value is None:
         return None
-    value = np.asarray(value)
+    value = asarray(value)
     if value.ndim == axes + 2:
         return value.reshape(-1, *value.shape[2:])
     return value
@@ -306,7 +307,7 @@ class InputResolver:
                 if values is None:
                     return None
                 for view in reversed(views):          # a view shows the frames it keeps
-                    values = np.asarray(values)[view._parentFrames()]
+                    values = values[view._parentFrames()]
                 return values
             # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>
             parsed = parse_field_ref(ref)
@@ -356,7 +357,7 @@ class InputResolver:
                 for view in reversed(views):
                     indices = (view._flatIndex() if kind == "atoms"
                                else view._parentFrames())
-                    values = np.asarray(values)[indices]
+                    values = values[indices]
                 return values
             if isinstance(ds, DatasetView):
                 views.append(ds)
@@ -372,7 +373,10 @@ class InputResolver:
         # Fall back to standard atomic masses from the elements (Z).
         try:
             from ase.data import atomic_masses
-            z = np.asarray(dataset.getAllElements(), dtype=int)
+            z = asarray(dataset.getAllElements(), dtype=int)
+            if isinstance(z, BatchedArray):
+                return BatchedArray(z.shape, float,
+                                    lambda a, b: np.asarray(atomic_masses[np.asarray(z[a:b])]))
             return np.asarray(atomic_masses[z], dtype=np.float64)
         except Exception as exc:
             logger.warning("InputResolver: reference.masses unavailable: %s", exc)
@@ -387,7 +391,7 @@ class InputResolver:
         lattice = dataset.getLattice() if hasattr(dataset, "getLattice") else None
         if lattice is None:
             return False
-        return bool(np.any(np.asarray(lattice, dtype=float) != 0))
+        return bool(np.any(asarray(lattice, dtype=float) != 0))
 
     def _n_atoms(self, dataset):
         """Per-structure atom count (the reserved Expression Variable, ADR 0042).

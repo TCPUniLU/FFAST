@@ -167,26 +167,45 @@ def _fast_finder():
     return ffast_xyz if callable(getattr(ffast_xyz, "find_frames", None)) else None
 
 
-def scan(path, *, progress=None, should_stop=None):
+def scan(path, *, progress=None, should_stop=None, on_batch=None, batch_bytes=None):
     """One pass over the file. A blank line between frames is an error (ASE
     would silently drop the rest); trailing blank lines are fine.
 
     With the fast parser (ADR 0100), it finds the frames FIND_BYTES at a
     time, with progress and cancel between calls; at a frame it leaves to
     Python (an unusual count line, a broken frame) the loop below goes on from
-    that frame, so a broken file gets the same message either way."""
+    that frame, so a broken file gets the same message either way.
+
+    ``on_batch(starts, counts, end)`` observes complete native windows while
+    their text is still hot. It requires the compiled finder and raises
+    NotFast on a Python handover, allowing its caller to restart on the usual
+    validated path. ``batch_bytes`` overrides the window-size target.
+    """
     st = os.stat(path)
     starts, counts = [], []
     line_no = pos = 0
     fast = _fast_finder()
+    if on_batch is not None and fast is None:
+        from ffast.io.extxyz_arrays import NotFast
+        raise NotFast("Windowed loading requires the compiled frame finder")
     if fast is not None:
         from ffast.readers.text import fast_threads
+        from ffast.io.budget import budget
         parts_s, parts_c, n, threads = [], [], 0, fast_threads()
         while True:
-            s, c, pos, state = fast.find_frames(str(path), pos, FIND_BYTES, threads)
+            owner = budget()
+            span = min(batch_bytes or FIND_BYTES, max(1, (owner.limit - owner.used) // 4))
+            with owner.reserve(span * 3):
+                s, c, pos, state = fast.find_frames(str(path), pos, span, threads)
             parts_s.append(s)
             parts_c.append(c)
             n += len(s)
+            if on_batch is not None:
+                if len(s):
+                    on_batch(s, c, pos)
+                if state == fast.FIND_PYTHON:
+                    from ffast.io.extxyz_arrays import NotFast
+                    raise NotFast("The frame index requires the Python scanner")
             if state != fast.FIND_MORE:
                 break
             if progress:
@@ -307,6 +326,20 @@ class _Build:
 
 def _fresh(index, st):
     return index.size == st.st_size and index.mtime_ns == st.st_mtime_ns
+
+
+def has_cached_or_running_index(path):
+    """Whether a load should reuse/join an index instead of starting a pipeline."""
+    path = os.path.abspath(path)
+    st = os.stat(path)
+    with _lock:
+        hit = _memory.get(path)
+        if hit is not None and _fresh(hit, st):
+            return True
+        build = _builds.get((path, st.st_size, st.st_mtime_ns))
+        if build is not None and not build.dead:
+            return True
+    return load_cached(path) is not None
 
 
 def get_frame_index(path, *, progress=None, cancel=None):

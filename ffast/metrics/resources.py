@@ -33,12 +33,16 @@ def available_memory() -> int:
                 if line.startswith("MemAvailable:"):
                     free = int(line.split()[1]) * 1024
                     left = cgroup_headroom()
+                    if left is None:
+                        left = slurm_headroom()
                     return free if left is None else min(free, left)
     except (OSError, ValueError, IndexError):
         pass
     try:
         import psutil
-        return int(psutil.virtual_memory().available)
+        free = int(psutil.virtual_memory().available)
+        left = slurm_headroom()
+        return free if left is None else min(free, left)
     except Exception:
         pass
     try:
@@ -55,6 +59,34 @@ def _read_int(path: str) -> int | None:
     except OSError:
         return None
     return int(text) if text.isdigit() else None
+
+
+def slurm_headroom() -> int | None:
+    """Fallback when a Slurm allocation's cgroup cannot be inspected.
+
+    Slurm exports memory in MiB. Subtract this server's process tree; shared
+    pages may be counted twice, which is conservative. A visible cgroup is
+    preferred because it also accounts for unrelated tasks in the job.
+    """
+    try:
+        amount = int(os.environ.get("SLURM_MEM_PER_NODE", "0"))
+        if not amount:
+            cpus = int(os.environ.get("SLURM_CPUS_PER_TASK") or
+                       os.environ.get("SLURM_CPUS_ON_NODE", "1"))
+            amount = int(os.environ.get("SLURM_MEM_PER_CPU", "0")) * cpus
+        if amount <= 0:
+            return None
+        import psutil
+        process = psutil.Process()
+        used = process.memory_info().rss
+        for child in process.children(recursive=True):
+            try:
+                used += child.memory_info().rss
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        return max(0, amount * _MIB - used)
+    except (ValueError, OSError, ImportError):
+        return None
 
 
 def _inactive_file(path: str, key: str) -> int:

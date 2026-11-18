@@ -15,6 +15,9 @@ class ZeroModelLoader(ModelLoader):
     def predict(self, dataset, indices=None, batchSize=50, taskID=None):
         # Zeros in the shape cached predictions keep (ADR 0058 step 6).
         offsets = dataset.getOffsets()
+        if indices is not None:
+            counts = np.diff(offsets)[indices]
+            offsets = np.concatenate(([0], np.cumsum(counts)))
         forces = framesShaped(np.zeros((int(offsets[-1]), 3)), offsets, dataset.isVariable)
         return np.zeros(len(offsets) - 1), forces
 

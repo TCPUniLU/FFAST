@@ -191,7 +191,7 @@ class Environment(EventClass):
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
                        selected_force_key=None, prediction_keys=None, slice_num=0,
-                       on_error=None, sampling=None, on_done=None):
+                       on_error=None, sampling=None, on_done=None, memory_mode="auto"):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.taskLoadDataset(
             path, datasetType,
@@ -199,6 +199,7 @@ class Environment(EventClass):
             selected_force_key=selected_force_key,
             prediction_keys=prediction_keys,
             slice_num=slice_num,
+            memory_mode=memory_mode,
             on_error=on_error,
             sampling=sampling,
             on_done=on_done,
@@ -206,7 +207,7 @@ class Environment(EventClass):
 
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
                            selected_force_key=None, prediction_keys=None,
-                           slice_num=0):
+                           slice_num=0, memory_mode="auto"):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.requestDatasetLoad(
             path, datasetType,
@@ -214,11 +215,12 @@ class Environment(EventClass):
             selected_force_key=selected_force_key,
             prediction_keys=prediction_keys,
             slice_num=slice_num,
+            memory_mode=memory_mode,
         )
 
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
                    selected_force_key=None, prediction_keys=None, slice_num=0,
-                   sampling=None, frames=None):
+                   sampling=None, frames=None, memory_mode="auto"):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.loadDataset(
             path, datasetType, taskID=taskID,
@@ -226,6 +228,7 @@ class Environment(EventClass):
             selected_force_key=selected_force_key,
             prediction_keys=prediction_keys,
             slice_num=slice_num,
+            memory_mode=memory_mode,
             sampling=sampling,
             frames=frames,
         )

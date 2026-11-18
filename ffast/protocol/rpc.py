@@ -178,9 +178,9 @@ def pack_plot_view(request_id: str, outcomes: dict, idx=None, n=None) -> bytes:
     results = {}
     for role, o in outcomes.items():
         if isinstance(o, MetricResult):
-            values = np.asarray(o.values)
-            if idx is not None:
-                values = values[idx]
+            values = None
+            if complete:
+                values = np.asarray(o.values[idx] if idx is not None else o.values)
             msg = MetricResultMessage(
                 ok=True, metric_id=o.metric_id, shape=o.shape, dtype=o.dtype, unit=o.unit,
                 compute_parameters=o.compute_parameters,

@@ -280,9 +280,12 @@ def cmd_metrics_run(args: argparse.Namespace) -> None:
     # starts a worker thread; only spin it up once cheap validation has passed.
     from ffast.core.environment import startHeadlessEnvironment
 
+    from ffast.config.loader import configure_resources
+    configure_resources(project_config)
     env = startHeadlessEnvironment()
     try:
-        env.taskLoadDataset(args.dataset, args.dataset_type)
+        env.taskLoadDataset(args.dataset, args.dataset_type,
+                            memory_mode=getattr(args, "memory_mode", "auto"))
         env.waitForTasks(verbose=args.verbose)
         dataset = env.getDatasetFromPath(args.dataset)
         if dataset is None:
@@ -559,6 +562,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd = metrics_sub.add_parser("run", help="Run a metric against a dataset")
     run_cmd.add_argument("metric_id", help="Metric ID to run")
     run_cmd.add_argument("--dataset", required=True, help="Path to a dataset file")
+    run_cmd.add_argument("--memory-mode", choices=("auto", "saving"), default="auto",
+                         help="Choose storage automatically or save memory (XYZ/EXTXYZ)")
     run_cmd.add_argument(
         "--dataset-type", default="ase (auto)",
         help="Dataset loader type (default: 'ase (auto)'; use 'sGDML' for .npz)",

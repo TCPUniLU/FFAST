@@ -15,6 +15,7 @@ import os
 import time
 
 import numpy as np
+from ffast.io.batched import BatchedArray, asarray
 from ase.calculators.calculator import PropertyNotImplementedError
 
 from ffast.core.flat_frames import FlatFrames
@@ -98,6 +99,10 @@ class LoadingCoordinator:
                 try:
                     out = load(*a, **kw)
                 except Exception as exc:
+                    from ffast.metrics.stop import Stopped
+                    from ffast.io.frame_index import FrameIndexCancelled
+                    if isinstance(exc, (Stopped, FrameIndexCancelled)):
+                        raise
                     if on_error is not None:
                         on_error(exc)
                         exc.ffast_reported = True   # no second pop-up (ADR 0066)
@@ -132,8 +137,10 @@ class LoadingCoordinator:
         if not frame_index.is_indexable(path):
             return None
         name = os.path.basename(path)
+        task = getattr(getattr(self._env, "tm", None), "getTask", lambda _: None)(taskID)
         return frame_index.get_frame_index(
-            path, progress=lambda n: self._progress(taskID, f"Indexing {name}: {n:,} frames…"))
+            path, progress=lambda n: self._progress(taskID, f"Indexing {name}: {n:,} frames…"),
+            cancel=task.get("cancel_event") if task else None)
 
     def _readProgress(self, path, taskID):
         """Report the one read of a load (ADR 0076) on its task: at most once
@@ -144,6 +151,8 @@ class LoadingCoordinator:
         lead = [f"Reading {name}"]
 
         def report(done, total):
+            from ffast.metrics.stop import check
+            check()
             now = time.monotonic()
             if done < total and last[0] is not None and now - last[0] < 1.0:
                 return
@@ -155,7 +164,16 @@ class LoadingCoordinator:
             saying it in the progress text that follows."""
             lead[0] = note
             self._progress(taskID, f"{note}…")
+        def bytes_read(done, total, frames):
+            from ffast.metrics.stop import check
+            check()
+            now = time.monotonic()
+            if done < total and last[0] is not None and now - last[0] < 1.0:
+                return
+            last[0] = now
+            self._progress(taskID, f"{lead[0]}: {frames:,} frames, {done / max(1, total):.0%}…")
         report.handed_over = handed_over
+        report.bytes_read = bytes_read
         return report
 
     def _resolveLoad(self, kind, path, typeName, popup=True):
@@ -352,7 +370,18 @@ class LoadingCoordinator:
                         f"Expected {expected} frames, got {len(kept)}.")
                 return kept
 
-            readerClass, loaded = self._readArrays(readerClass, path, taskID, select=select)
+            storage = getattr(dataset, "storage", None)
+            if (storage is not None and readerClass is storage.reader
+                    and os.path.realpath(path) == os.path.realpath(storage.path)):
+                # All columns and fingerprints were established together.
+                # Reuse this exact source version and frame selection.
+                from ffast.readers.indexed import IndexedArrays
+                storage.check_source()
+                loaded = chunks.Loaded(IndexedArrays(storage), dataset.contents,
+                                       storage.frames, dataset.sourceFrameCount,
+                                       dataset.reader_name)
+            else:
+                readerClass, loaded = self._readArrays(readerClass, path, taskID, select=select)
             arrays, contents = loaded.arrays, loaded.contents
             energies, forces = contents.get("energies") or [], contents.get("forces") or []
             if not energies and not forces:
@@ -361,7 +390,7 @@ class LoadingCoordinator:
             if ek is None and fk is None:
                 raise ReaderError(f"Nothing to load from {name}: no energy and no force chosen")
             E = arrays.get(f"energy:{ek}") if ek else None
-            E = None if E is None else np.asarray(E, dtype=np.float64).reshape(-1)
+            E = None if E is None else asarray(E, dtype=np.float64).reshape(-1)
             Fv = arrays.get(f"forces:{fk}") if fk else None
             counts = np.asarray(arrays["n_atoms"], dtype=np.int64)
             F = None if Fv is None else FlatFrames(Fv, np.concatenate([[0], np.cumsum(counts)]))
@@ -538,7 +567,7 @@ class LoadingCoordinator:
         if E is not None:
             energyDataType = self._env.data.getDataType("energy")
             self._env.data.setData(
-                energyDataType.newDataEntity(energy=np.asarray(E).flatten()),
+                energyDataType.newDataEntity(energy=asarray(E).reshape(-1)),
                 "energy", model=fingerprint, dataset=dataset,
             )
 
@@ -584,7 +613,7 @@ class LoadingCoordinator:
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
                        selected_force_key=None, prediction_keys=None, slice_num=0,
-                       on_error=None, sampling=None, on_done=None):
+                       on_error=None, sampling=None, on_done=None, memory_mode="auto"):
         """Load dataset and optionally load predictions from same file.
 
         Args:
@@ -602,6 +631,8 @@ class LoadingCoordinator:
             'prediction_keys': prediction_keys,
             'slice_num': slice_num
         }
+        if memory_mode != "auto":
+            kwargs['memory_mode'] = memory_mode
         if sampling is not None:
             kwargs['sampling'] = sampling
         self._queueLoad(
@@ -615,7 +646,7 @@ class LoadingCoordinator:
 
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
                            selected_force_key=None, prediction_keys=None,
-                           slice_num=0):
+                           slice_num=0, memory_mode="auto"):
         """Queue a dataset load in-process."""
         self.taskLoadDataset(
             path, datasetType,
@@ -623,11 +654,12 @@ class LoadingCoordinator:
             selected_force_key=selected_force_key,
             prediction_keys=prediction_keys,
             slice_num=slice_num,
+            memory_mode=memory_mode,
         )
 
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
                    selected_force_key=None, prediction_keys=None, slice_num=0,
-                   on_error=None, sampling=None, frames=None):
+                   on_error=None, sampling=None, frames=None, memory_mode="auto"):
         """Load dataset and create ghost models for prediction keys.
 
         A reader (ADR 0095) serves its type for every file it takes (the xyz
@@ -660,7 +692,7 @@ class LoadingCoordinator:
             try:
                 result = self._loadWithReader(
                     loaderClass, path, slice_num, selected_energy_key,
-                    selected_force_key, taskID, sampling=sampling, frames=frames)
+                    selected_force_key, taskID, sampling=sampling, frames=frames, memory_mode=memory_mode)
             except (ReaderError, NotEnoughMemory) as e:
                 # ReaderError's text is for the user as it stands (ADR 0095,
                 # decision 8): no traceback, no "Failed to load" around it.
@@ -680,6 +712,8 @@ class LoadingCoordinator:
                 on_error("no dataset could be read from it")
             return
 
+        from ffast.metrics.stop import check
+        check()
         dataset.initialise()
 
         # Resolve the prediction-keys atomsList BEFORE the lock: a cache miss
@@ -742,7 +776,9 @@ class LoadingCoordinator:
         from ffast.io.extxyz_arrays import NotFast, PropertiesDiffer
         from ffast.readers import chunks, registry
 
-        self.prepareFrameIndex(path, taskID)    # shares the Load dialog's scan, and reports it
+        from ffast.readers.text import can_scan_and_read
+        if not can_scan_and_read(readerClass, path, **kwargs):
+            self.prepareFrameIndex(path, taskID)    # shares the Load dialog's scan, and reports it
         progress = self._readProgress(path, taskID) if taskID is not None else None
         handed = getattr(progress, "handed_over", None)
         try:
@@ -760,7 +796,7 @@ class LoadingCoordinator:
             return other, chunks.read_arrays(other, path, progress=progress, **kwargs)
 
     def _loadWithReader(self, readerClass, path, slice_num, energyKey, forceKey, taskID,
-                        sampling=None, frames=None):
+                        sampling=None, frames=None, memory_mode="auto"):
         """A dataset from a reader (ADR 0095): FFAST asks for the frames the
         stride keeps, or the energy sample (ADR 0096), in chunks, with progress
         and the memory check, then builds its own dataset from the arrays."""
@@ -774,10 +810,12 @@ class LoadingCoordinator:
                 raise ReaderError("Load either a sample by energy or every n-th frame, not both.")
             kept, settings = self._energySample(readerClass, path, sampling, energyKey, frames, taskID)
             kwargs = {"select": self._keptFrames(path, kept)}
+        kwargs["memory_mode"] = memory_mode
         readerClass, loaded = self._readArrays(readerClass, path, taskID, **kwargs)
         with chunks.reader_errors(readerClass.name, path):
             dataset = ReaderDataset(path, loaded, readerClass.name,
                                     energy_key=energyKey, force_key=forceKey)
+        dataset.requested_memory_mode = memory_mode
         if settings is not None:
             dataset.sampling = settings
         return dataset
@@ -891,6 +929,9 @@ class LoadingCoordinator:
         from ffast.readers.dataset import ReaderFieldSource
 
         arrays, contents = dataset.arrays, dataset.contents
+        storage = getattr(dataset, "storage", None)
+        if storage is not None:
+            storage.check_source()
         if arrays is None:
             logger.error(f"The extra values of {os.path.basename(path)} are no longer in memory")
             return
@@ -902,7 +943,7 @@ class LoadingCoordinator:
                     contents.get("energies") or [], contents.get("forces") or [],
                     energy_key or "", force_key or "", file=os.path.basename(path))
                 E = arrays.get(f"energy:{ek}") if ek else None
-                E = None if E is None else np.asarray(E, dtype=np.float64).reshape(-1)
+                E = None if E is None else asarray(E, dtype=np.float64).reshape(-1)
                 Fv = arrays.get(f"forces:{fk}") if fk else None
                 if E is None and Fv is None:
                     logger.warning(f"Prediction '{model_name}' has neither energies nor forces; skipped.")

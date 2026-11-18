@@ -73,6 +73,9 @@ def formula_token(registry, metric_id: str) -> str | None:
 
 
 def _value_fingerprint(v: Any) -> str:
+    from ffast.io.batched import BatchedArray
+    if isinstance(v, BatchedArray):
+        return str((v.shape, str(v.dtype), v.content_digest()))
     if hasattr(v, "__array__"):
         return _array_fingerprint(np.asarray(v))
     return hashlib.sha256(str(v).encode()).hexdigest()[:16]
@@ -165,12 +168,13 @@ class MetricCache:
 
     def __init__(
         self,
-        max_bytes: int = DEFAULT_MAX_BYTES,
+        max_bytes: int | None = None,
         spill_dir: str | os.PathLike | None = None,
         spill_min_bytes: int = SPILL_MIN_BYTES,
         spill_max_bytes: int | None = None,
     ) -> None:
-        self._max_bytes = max_bytes
+        from ffast.io.budget import budget
+        self._max_bytes = min(DEFAULT_MAX_BYTES, budget().limit // 4) if max_bytes is None else max_bytes
         self._store: OrderedDict[CacheKey, tuple[MetricResult, int]] = OrderedDict()
         self._total = 0
         self._lock = threading.Lock()
@@ -187,6 +191,22 @@ class MetricCache:
         # Keys hash input content, so this is how a delete finds what belongs to
         # a dataset or prediction (forget_objects).
         self._uses: dict[CacheKey, set[tuple]] = {}
+        budget().register_cache(self._evict_one)
+
+    def _evict_one(self):
+        """Release optional RAM results when active dataset work needs room."""
+        # Budget -> cache must never wait for cache -> array-finalizer ->
+        # budget in another thread (clear/replace can release arrays).
+        if not self._lock.acquire(blocking=False):
+            return False
+        try:
+            if not self._store:
+                return False
+            _, (_, size) = self._store.popitem(last=False)
+            self._total -= size
+            return True
+        finally:
+            self._lock.release()
 
     def claim(self, key: CacheKey) -> Future | None:
         """``None`` when the caller is now the one computing ``key`` and must
@@ -248,7 +268,10 @@ class MetricCache:
 
     def put(self, key: CacheKey, result: MetricResult) -> None:
         result._tag = _next_tag()
-        size = int(np.asarray(result.values).nbytes)
+        from ffast.io.batched import BatchedArray
+        # Already-spilled results own their files. Retain the descriptor,
+        # without materialising or writing a second copy of the result.
+        size = 1024 if isinstance(result.values, BatchedArray) else int(np.asarray(result.values).nbytes)
         out: list[tuple[CacheKey, MetricResult, int]] = []
         with self._lock:
             old = self._store.pop(key, None)

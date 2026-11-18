@@ -2021,6 +2021,11 @@
             <option value="energy" disabled>Sample by energy</option>
           </select>
           <input id="fb-stride" type="number" min="1" step="1" value="1" aria-label="Every Nth frame" hidden>
+          <label for="fb-memory-mode">Memory</label>
+          <select id="fb-memory-mode">
+            <option value="auto">Automatic</option>
+            <option value="saving">Save memory</option>
+          </select>
           <label for="fb-energy-unit">Energy unit</label>
           <input id="fb-energy-unit" type="text" list="fb-energy-units" autocomplete="off" spellcheck="false">
           <datalist id="fb-energy-units"></datalist>

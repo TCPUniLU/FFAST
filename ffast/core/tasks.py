@@ -2,6 +2,7 @@ from ffast.core.events import EventClass
 import asyncio
 import logging
 import queue
+import threading
 import asyncio
 
 logger = logging.getLogger("FFAST")
@@ -52,6 +53,9 @@ class TaskManager(EventClass):
             return
 
         logger.info(f"Cancelling task {taskID} with name {task['name']}")
+        cancel = task.get("cancel_event")
+        if cancel is not None:
+            cancel.set()
         task["task"].cancel()
 
         try:
@@ -130,7 +134,21 @@ class TaskManager(EventClass):
         loop = asyncio.get_event_loop()
 
         if threaded:
-            co = asyncio.to_thread(func, *args, **kwargs, taskID=taskID)
+            cancel_event = threading.Event()
+            taskInfo["cancel_event"] = cancel_event
+
+            def run_thread():
+                from ffast.metrics import stop
+                token = stop.running_under(cancel_event.is_set)
+                try:
+                    return func(*args, **kwargs, taskID=taskID)
+                except stop.Stopped:
+                    if not cancel_event.is_set():
+                        raise
+                finally:
+                    stop.reset(token)
+
+            co = asyncio.to_thread(run_thread)
 
             async def taskWrapper(c0, taskID):  # this should receive co not c0, but the code still works!!
                 await c0  # changed await co to await c0

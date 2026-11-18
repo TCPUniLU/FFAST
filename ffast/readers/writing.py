@@ -135,11 +135,18 @@ def write_dataset(reader_class, path, dataset, items, *, format=None, progress=N
         os.makedirs(parent, exist_ok=True)
     writer = reader_class.open_writer(path, contents, format)
     try:
-        for a in range(0, total, chunk):
-            b = min(a + chunk, total)
+        a = 0
+        offsets = np.asarray(dataset.getOffsets()) if hasattr(dataset, "getOffsets") else None
+        from ffast.io.budget import budget
+        while a < total:
+            atoms = max(1, budget().block_bytes // (32 + 24 * len(items)))
+            fit = (int(np.searchsorted(offsets, offsets[a] + atoms, side="right")) - 1
+                   if offsets is not None else a + chunk)
+            b = max(a + 1, min(a + chunk, total, fit))
             writer.write(_chunk(dataset, items, list(range(a, b))))
             if progress:
                 progress(b, total)
+            a = b
         writer.close()
     except BaseException:
         abort = getattr(writer, "abort", None)

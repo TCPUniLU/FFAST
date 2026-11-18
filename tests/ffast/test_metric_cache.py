@@ -67,7 +67,8 @@ def test_the_default_limit_is_a_quarter_of_memory_and_at_least_one_gibibyte():
     from ffast.metrics.cache import DEFAULT_MAX_BYTES, _memory_bytes
     total = _memory_bytes()
     assert DEFAULT_MAX_BYTES == max(1 << 30, total // 4 if total else 0)
-    assert MetricCache()._max_bytes == DEFAULT_MAX_BYTES
+    from ffast.io.budget import budget
+    assert MetricCache()._max_bytes == min(DEFAULT_MAX_BYTES, budget().limit // 4)
 
 
 # ── results that do not fit in memory go to disk (2026-11-02) ────────────────

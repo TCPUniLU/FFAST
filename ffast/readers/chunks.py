@@ -17,6 +17,7 @@ import numpy as np
 from ffast.io.extxyz_arrays import MEMORY_FLOOR, MEMORY_SHARE, NotEnoughMemory, NotFast, _gib
 from ffast.metrics.resources import available_memory
 from ffast.readers.contract import ReaderError
+from ffast.metrics.stop import Stopped
 
 logger = logging.getLogger("FFAST")
 
@@ -41,6 +42,8 @@ def reader_errors(reader_name: str, path: str):
     logged without a pop-up."""
     try:
         yield
+    except Stopped:
+        raise
     except (ReaderError, NotEnoughMemory, NotFast):
         raise
     except Exception as exc:
@@ -57,7 +60,8 @@ def is_level2(reader_class) -> bool:
 
 def read_arrays(reader_class, path, *, stride=0, select=None, progress=None,
                 chunk_bytes=CHUNK_BYTES, first_frames=FIRST_CHUNK_FRAMES,
-                workers=None, batch=None, use_cache=True, on_handover=None) -> Loaded:
+                workers=None, batch=None, use_cache=True, on_handover=None,
+                memory_mode="auto") -> Loaded:
     """Every ``stride``-th frame of ``path`` through ``reader_class``, joined.
 
     ``stride`` of 0, 1 or less keeps every frame. ``select(n_file_frames)``,
@@ -74,7 +78,8 @@ def read_arrays(reader_class, path, *, stride=0, select=None, progress=None,
         with reader_errors(reader_name, path):
             arrays, contents, frames, n_file = text.read_level2(
                 reader_class, path, stride=stride, select=select, progress=progress,
-                workers=workers, batch=batch, use_cache=use_cache, on_handover=on_handover)
+                workers=workers, batch=batch, use_cache=use_cache, on_handover=on_handover,
+                memory_mode=memory_mode)
         return Loaded(arrays, contents, frames, n_file, reader_name)
     with reader_errors(reader_name, path):
         reader = reader_class(path)

@@ -96,6 +96,15 @@ class SessionPersistence:
                     saveData[k] = np.array(v, dtype=object)
                 else:
                     saveData[k] = v
+            from ffast.io.batched import BatchedArray
+            from ffast.io.result_array import save_array
+            import hashlib
+            for field, value in list(saveData.items()):
+                if isinstance(value, BatchedArray):
+                    name = hashlib.sha256(f"{key}|{field}".encode()).hexdigest() + ".npy"
+                    save_array(os.path.join(cacheDir, name), value)
+                    del saveData[field]
+                    saveData[field + "__batched"] = name
             np.savez_compressed(
                 os.path.join(cacheDir, key),
                 entityDataTypeKey=entity.dataType.key,
@@ -168,6 +177,7 @@ class SessionPersistence:
         if reader:
             from ffast.readers import registry
             obj_info["reader"] = reader
+            obj_info["memory_mode"] = getattr(o, "requested_memory_mode", "auto")
             package = getattr(registry.get(reader), "package", None)
             if package:
                 obj_info["reader_package"] = package
@@ -265,11 +275,13 @@ class SessionPersistence:
                         dataset_type = reader
 
                     sample = {}
+                    if obj_info.get("memory_mode", "auto") != "auto":
+                        sample["memory_mode"] = obj_info["memory_mode"]
                     if obj_info.get("sampling") is not None and obj_info.get("kept_frames_file"):
-                        sample = {
+                        sample.update({
                             "sampling": obj_info["sampling"],
                             "frames": np.load(os.path.join(path, obj_info["kept_frames_file"])).tolist(),
-                        }
+                        })
                     self.loadDataset(
                         obj_path, dataset_type,
                         selected_energy_key=ase_energy_key,
@@ -297,6 +309,12 @@ class SessionPersistence:
             d = dict(np.load(npzPath, allow_pickle=True))
             dataTypeKey = str(d.pop("entityDataTypeKey"))
             cacheKey = str(d.pop("cacheKey"))
+            from ffast.io.result_array import open_array
+            for k in [k for k in d if k.endswith("__batched")]:
+                file = str(d.pop(k))
+                if os.path.basename(file) != file:
+                    raise ValueError("Invalid saved array filename")
+                d[k[:-len("__batched")]] = open_array(os.path.join(cacheDir, file))
 
             # Convert numpy object arrays back to Python lists.
             # Variable-sized data (e.g. forces for molecules with

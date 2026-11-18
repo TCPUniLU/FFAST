@@ -86,12 +86,22 @@ _Avoid_: offsets, frame table
 
 ### Frame arrays
 
-Every frame of a dataset file, read once into joined arrays: elements,
+Every frame of a dataset file, exposed as joined arrays: elements,
 positions, forces, energies, cells, and the numeric header values and atom
 columns. The fingerprint, one-frame reads and Dataset Fields all come from
-them, so a load never parses the file twice. Our own extxyz reader makes them
+them. Small datasets retain these arrays; memory-saving storage reads bounded
+parts as needed. Our own extxyz reader makes them
 for indexed `.xyz`/`.extxyz` files; ASE reads everything else.
 _Avoid_: cache, chunk
+
+### Memory-saving mode
+
+Access to an XYZ dataset through its frame index and bounded parsed batches,
+preserving every selected frame. Storage switches automatically when the
+parsed data and working space exceed the shared RAM budget, or the user can
+choose Save memory. Optional parsed disk caching speeds repeated reads;
+analysis results have a separate disk budget. Laptop and Slurm RAM policies
+use their respective available limits (ADR 0102).
 
 ### Reader
 
@@ -494,6 +504,10 @@ Which values set the automatic ends of the colour bar when atoms are coloured
 by a metric: the **whole dataset** (default; a colour means the same in every
 frame), **this frame**, or the **visible atoms** of this frame. It changes only
 the ends, never the values. A typed limit wins over it (ADR 0084).
+For the whole dataset, the server scans calculated colour values in batches
+and caches exact min/max. It keeps a recipe for computing visible-frame
+values, rather than saving a colour array for the whole trajectory. Full plot
+results can be reused when already available (ADR 0102).
 
 ## The 3D view
 

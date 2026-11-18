@@ -344,10 +344,16 @@ class VisualizationConfig(BaseModel):
     tabs: list[AnalysisTabConfig] = Field(default_factory=list)
 
 
+class ResourceConfig(BaseModel):
+    """Server-wide byte budgets; None selects the host/job-aware default."""
+    model_config = ConfigDict(extra="forbid")
+    ram_bytes: int | None = Field(default=None, gt=0)
+    parsed_cache_bytes: int | None = Field(default=None, ge=0)
+    result_cache_bytes: int | None = Field(default=None, ge=0)
+
+
 class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
-
-
-    
+    resources: ResourceConfig = Field(default_factory=ResourceConfig)
