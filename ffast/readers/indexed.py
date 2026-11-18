@@ -17,6 +17,7 @@ import struct
 import tempfile
 import threading
 import uuid
+import weakref
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -31,6 +32,18 @@ from ffast.readers.contract import ReaderError
 log = logging.getLogger("FFAST")
 _disk_lock = threading.RLock()
 _parse_lock = threading.RLock()
+# Stores open in this process. Eviction must not delete their cache files.
+# This guards one process only: another server sharing the folder cannot see it.
+_live_stores = weakref.WeakSet()
+
+
+def _protected(path, owner):
+    """True if ``path`` belongs to another store that is open right now. The
+    store that is saving (``owner``) may still trim its own files. Identities
+    are read at eviction time because a scan changes a store's identity."""
+    name = Path(path).name
+    return any(s is not owner and name.startswith(s.identity)
+               for s in list(_live_stores))
 
 
 _FRAME_COLUMNS = ("n_atoms", "cell", "pbc", "numbers", "__restore__")
@@ -128,6 +141,7 @@ class IndexedStore:
         h = hashlib.sha256(repr(identity).encode())
         h.update(self.frames)
         self.identity = h.hexdigest()
+        _live_stores.add(self)
         self.info = {}
         self.sample = {}
         self.sample_frames = set(_sample_indices(len(counts)))
@@ -418,6 +432,8 @@ class IndexedStore:
                     candidates = sorted(self.folder.glob("*.npz"),
                         key=lambda p: (p.name.endswith("--1--1.npz"), p.stat().st_mtime_ns))
                     for candidate in candidates:
+                        if _protected(candidate, self):
+                            continue
                         if used - old + len(data) <= limit:
                             break
                         used -= candidate.stat().st_size
@@ -593,6 +609,8 @@ class IndexedStore:
                         if f.is_file()
                     )
                     for old in files:
+                        if _protected(old, self):
+                            continue
                         if legacy + used + size <= limit:
                             break
                         used -= old.stat().st_size

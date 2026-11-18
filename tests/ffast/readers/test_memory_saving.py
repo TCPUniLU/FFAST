@@ -989,3 +989,21 @@ def test_cache_keeps_every_column_when_there_is_room(tmp_path, small_budget, mon
     part = store._part(a, b)
     assert part["numbers"].dtype == eager.arrays["numbers"].dtype
     assert "__restore__" not in part
+
+
+def test_cache_never_evicts_files_of_an_open_dataset(tmp_path, small_budget, monkeypatch):
+    """A second dataset that does not fit must not delete the batches of an open one."""
+    path, store = _cached_store(tmp_path, small_budget, monkeypatch, 8 * 2**20)
+    mine = sorted(Path(store.folder).glob(store.identity + "*"))
+    assert mine
+    # Room for dataset A only: there is no space left for dataset B.
+    small_budget.parsed_limit = sum(f.stat().st_size for f in mine) + 4096
+    other = write_xyz(tmp_path / "other.xyz", n=300)
+    chunks.read_arrays(XyzReader, other, memory_mode="saving", workers=1)
+    assert all(f.exists() for f in mine)
+    small_budget.cache.clear()
+    small_budget.cache_bytes = 0
+    _forbid_parsing(monkeypatch, store)
+    eager = dataset(path)
+    np.testing.assert_array_equal(
+        np.asarray(store.column("forces:forces")[:]), eager.arrays["forces:forces"])
