@@ -116,3 +116,22 @@ def test_stall_timeout_names_a_task_that_never_reports_progress(env):
             env.waitForTasks(stall_timeout_s=0.5)
     finally:
         release.set()
+
+
+def test_a_quick_task_is_noticed_without_waiting_for_the_next_turn(env):
+    """New work and a finished task wake the loop; before, each turn slept
+    0.1 s, so a 10 ms task took 0.1-0.2 s to be waited for."""
+    times = []
+    for _ in range(5):
+        t0 = time.monotonic()
+        env.tm.queueTask(_sleeper(0.01), threaded=True, name="quick")
+        env.waitForTasks()
+        times.append(time.monotonic() - t0)
+    assert sorted(times)[2] < 0.06, times
+
+
+def test_an_idle_loop_does_not_spin(env):
+    """With nothing to do the loop still pauses 0.1 s per turn."""
+    start = env._workGate._iteration
+    time.sleep(0.5)
+    assert env._workGate._iteration - start <= 8

@@ -4,6 +4,25 @@ import logging
 logger = logging.getLogger("FFAST")
 subs = defaultdict(list)
 
+# Event loops that sleep between turns register a waker here, so new work
+# (an event, a queued task, a metric to generate) starts the next turn at once
+# instead of after the sleep. Wakers must be safe to call from any thread.
+_wakers = set()
+
+
+def add_waker(fn):
+    _wakers.add(fn)
+
+
+def remove_waker(fn):
+    _wakers.discard(fn)
+
+
+def wake_loops():
+    """Tell every registered event loop that there is new work. Any thread."""
+    for fn in list(_wakers):
+        fn()
+
 
 def doNothing(*args):
     pass
@@ -50,10 +69,13 @@ class EventClass:
         if not quiet:
             logger.debug(f"Event pushed: {event} by {type(self)}")
 
-        for obj, func, asynchronous in subs[event]:
+        targets = subs[event]
+        for obj, func, asynchronous in targets:
             obj.eventQueue.append(
                 (event, func, asynchronous, quiet, args, kwargs)
             )
+        if targets:
+            wake_loops()
 
     async def eventHandle(self):
         """

@@ -24,6 +24,8 @@ computed in this process.
 import logging
 import time
 
+from ffast.core.events import wake_loops
+
 logger = logging.getLogger("FFAST")
 
 
@@ -626,6 +628,7 @@ class DataService:
         dataType = self.getDataType(key)
         cacheKey = dataType.getCacheKey(model=model, dataset=dataset)
         self.generationQueue.add(cacheKey)
+        wake_loops()
         if self.headless:
             print(f"Added {cacheKey} to generation queue", flush=True)
 

@@ -1,4 +1,4 @@
-from ffast.core.events import EventClass
+from ffast.core.events import EventClass, wake_loops
 import asyncio
 import logging
 import queue
@@ -270,10 +270,11 @@ class TaskManager(EventClass):
             return
         kwargs["taskKey"] = taskKey
         self.taskQueue.put((args, kwargs))
+        wake_loops()
 
     async def handleTaskQueue(self):
-        # Every waiting task, not one per turn: a turn lasts 0.1 s, and a
-        # plot's metric requests are one task each.
+        # Every waiting task, not one per turn: a turn can last up to 0.1 s,
+        # and a plot's metric requests are one task each.
         q = self.taskQueue
         while not q.empty():
             args, kwargs = q.get()

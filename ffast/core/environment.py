@@ -1,5 +1,5 @@
 import ase.io.formats
-from ffast.core.events import EventClass
+from ffast.core.events import EventClass, add_waker, remove_waker
 from ffast.core.tasks import TaskManager
 from ffast.core.work_gate import WorkGate
 from ffast.cache.store import DataCache
@@ -525,7 +525,34 @@ class HeadlessEnvironment(Environment, threading.Thread):
     async def headlessEventLoop(self):
         """Drive events, generation, and task execution until shutdown is requested."""
         taskManager = self.tm
+        # New work wakes the loop at once (events.wake_loops); 0.1 s stays as
+        # the longest pause, for any producer that does not call it. Before,
+        # every turn slept the full 0.1 s, so a finished load or metric was
+        # noticed up to 0.1 s late and every timing came in 0.1 s steps.
+        loop = asyncio.get_running_loop()
+        loopThread = threading.get_ident()
+        woken = asyncio.Event()
+
+        def wake():
+            if threading.get_ident() == loopThread:
+                woken.set()
+            else:
+                try:
+                    loop.call_soon_threadsafe(woken.set)
+                except RuntimeError:
+                    pass  # the loop has closed
+
+        add_waker(wake)
+        try:
+            await self._runHeadlessTurns(taskManager, woken)
+        finally:
+            remove_waker(wake)
+
+    async def _runHeadlessTurns(self, taskManager, woken):
         while not self.quitReady:
+            # Cleared before the turn, so work that arrives during it starts
+            # the next turn without waiting.
+            woken.clear()
             # One iteration's error (a bad queue key, a task failure) must never
             # tear down the loop — on the server this loop IS the process, so an
             # unhandled exception here kills the server and drops every client
@@ -539,7 +566,10 @@ class HeadlessEnvironment(Environment, threading.Thread):
                 logger.exception("headlessEventLoop: iteration error (continuing)")
             # Checked after everything above has run, so it sees the settled state.
             self._workGate.mark_iteration(self._loopIsIdle())
-            await asyncio.sleep(0.1)
+            try:
+                await asyncio.wait_for(woken.wait(), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
 
         await self.eventHandle()
         await taskManager.eventHandle()
