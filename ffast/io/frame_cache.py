@@ -151,6 +151,4 @@ def _nbytes(arrays):
                + [v for g in groups for v in g.values()])
 
 
-def _entry_bytes(entry):
-    return sum(f.stat().st_size for f in entry.iterdir() if f.is_file())
 

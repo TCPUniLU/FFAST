@@ -95,8 +95,9 @@ def test_a_cancelled_scan_keeps_its_committed_windows_and_no_temporary_files(fol
     starts = sorted(int(p.name[:-4].split("-")[-2]) for p in folder.glob("*-*.npz"))
     assert len(starts) == 2 and starts[0] == 0
     assert not list(folder.glob("*.tmp*"))
-    assert [p.name for p in folder.glob("*.lock")] == [".lock"]     # the folder's own, not the scan's
-    assert [p.name for p in folder.glob("*.json") if not p.name.endswith(".progress.json")] == []
+    assert [p.name for p in folder.glob("*.lock")] == []     # the scan's lock is gone; the space lock is in the parent
+    assert [p.name for p in folder.glob("*.json")
+            if not p.name.endswith((".progress.json", ".source.json"))] == []
 
 
 def test_a_scan_that_cannot_take_the_lock_loads_correctly_and_writes_no_batches(folder, tmp_path):
@@ -111,7 +112,9 @@ def test_a_scan_that_cannot_take_the_lock_loads_correctly_and_writes_no_batches(
         other = scan(path)
         assert other.identity == identity
         assert other.use_cache is False
-        assert [p.name for p in folder.iterdir()] == [f"{identity}.lock"]     # only the holder's lock
+        # No batch, record or manifest: only the holder's lock and the two marker files.
+        assert sorted(p.name for p in folder.iterdir()) == sorted(
+            [f"{identity}.lock", f"{identity}.open", f"{identity}.source.json"])
         for key in reference.info:
             assert other.info[key]["digest"] == reference.info[key]["digest"]
         assert other.column("positions")[5].tolist() == reference.column("positions")[5].tolist()

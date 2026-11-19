@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from ffast.cache.fingerprint import SCHEME, ChunkHasher
+from ffast.io import cache_space
 from ffast.io.batched import BatchedArray
 from ffast.io.budget import budget
 from ffast.io.extxyz_arrays import NotEnoughMemory, NotFast
@@ -33,23 +34,23 @@ from ffast.readers.contract import ReaderError
 log = logging.getLogger("FFAST")
 _disk_lock = threading.RLock()
 _parse_lock = threading.RLock()
-# Stores open in this process. Eviction must not delete their cache files.
-# This guards one process only: another server sharing the folder cannot see it.
-_live_stores = weakref.WeakSet()
 # The chunk digests of a finished scan, beside its manifest (ADR 0107).
 CHUNKS_SUFFIX = ".chunks.npz"
 
 
-def _protected(path, owner):
-    """True if ``path`` belongs to another store that is open right now. The
-    store that is saving (``owner``) may still trim its own files. The files
-    of every open identity are named by it, scan or no scan (ADR 0107)."""
-    name = Path(path).name
-    if (owner is not None and name.startswith(owner.identity)
-            and (scan_record.is_state_file(name) or name.endswith(CHUNKS_SUFFIX))):
-        return True        # the saving scan's own record and digest sidecar
-    return any(s is not owner and name.startswith(s.identity)
-               for s in list(_live_stores))
+def _open_identities(folder, own):
+    """The identities in ``folder`` that some process has open, ``own`` left
+    out (ADR 0108)."""
+    out = set()
+    try:
+        names = [p.name for p in Path(folder).glob("*" + cache_space.OPEN)]
+    except OSError:
+        return out
+    for name in names:
+        identity = name[:-len(cache_space.OPEN)]
+        if identity != own and cache_space.is_open(Path(folder) / name):
+            out.add(identity)
+    return out
 
 
 _FRAME_COLUMNS = ("n_atoms", "cell", "pbc", "numbers", "__restore__")
@@ -202,7 +203,7 @@ class IndexedStore:
         full = full or scan_source
         h.update(b"all" if full else self.frames)
         self.identity = h.hexdigest()
-        _live_stores.add(self)
+        self._hold_cache_open()
         self.info = {}
         self.sample = {}
         self.sample_frames = set(_sample_indices(len(counts)))
@@ -227,7 +228,6 @@ class IndexedStore:
                 progress(len(counts), len(counts))
             return
         if require_manifest:
-            _live_stores.discard(self)
             raise NoManifest(self.path)
         self._warming = True
         from ffast.readers.text import fast_threads
@@ -260,6 +260,35 @@ class IndexedStore:
         self._save_manifest()
         self._warming = False
 
+    def _hold_cache_open(self):
+        """Name this identity's source file, mark its last use and hold its
+        ``.open`` lock for as long as the store lives, so no process evicts
+        its files (ADR 0108)."""
+        self._open_handle = None
+        if not self.use_cache:
+            return
+        source = self.folder / f"{self.identity}{cache_space.SOURCE}"
+        for _ in range(3):         # an evictor may delete the file under us
+            try:
+                self.folder.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.utime(source)
+                except FileNotFoundError:
+                    fd, temp = tempfile.mkstemp(dir=self.folder, prefix=f"{self.identity}-",
+                                                suffix=".tmp")
+                    with os.fdopen(fd, "w") as f:
+                        json.dump({"path": os.path.realpath(self.path),
+                                   "state": list(self.state)}, f)
+                    os.replace(temp, source)
+            except OSError:
+                return             # the cache folder is not writable: _save copes
+            handle = cache_space.hold_open(
+                self.folder / f"{self.identity}{cache_space.OPEN}", needs=source)
+            if handle is not None:
+                self._open_handle = handle
+                weakref.finalize(self, handle.close)
+                return
+
     def _scan_source(self, progress):
         """Parse each indexed window while its text is still in the OS cache.
 
@@ -287,7 +316,7 @@ class IndexedStore:
             try:
                 scan_record.ScanRecord.sweep_changed(
                     self.folder, self.path, self.state, self.identity,
-                    {s.identity for s in list(_live_stores) if s is not self})
+                    _open_identities(self.folder, self.identity))
                 resume_at = self._resume()
             except OSError:
                 self._record = None
@@ -687,35 +716,19 @@ class IndexedStore:
             data = json.dumps(meta)
             if len(data) > min(budget().parsed_limit, budget().block_bytes):
                 return False
-            from ffast.io.frame_cache import _entry_bytes
-
-            with _disk_lock:
+            with _disk_lock, cache_space.space_lock(self.folder.parent):
                 destination = self.folder / f"{self.identity}.json"
-                used = sum(
-                    _entry_bytes(d)
-                    for d in self.folder.parent.iterdir()
-                    if d.is_dir() and d.name != "results"
-                )
                 old = destination.stat().st_size if destination.exists() else 0
                 limit = min(
                     budget().parsed_limit,
                     shutil.disk_usage(self.folder).free // 4,
                 )
-                if used - old + len(data) > limit:
-                    # The free-space allowance shrinks as batches are written.
-                    # Preserve the tiny schema/fingerprint record by dropping
-                    # an atom batch rather than repeating a full source scan.
-                    candidates = sorted(self.folder.glob("*.npz"),
-                        key=lambda p: (p.name.endswith(("--1--1.npz", CHUNKS_SUFFIX)),
-                                       p.stat().st_mtime_ns))
-                    for candidate in candidates:
-                        if _protected(candidate, self):
-                            continue
-                        if used - old + len(data) <= limit:
-                            break
-                        used -= candidate.stat().st_size
-                        candidate.unlink(missing_ok=True)
-                if used - old + len(data) > limit:
+                # The free-space allowance shrinks as batches are written: other
+                # datasets give way, this one is never trimmed (ADR 0108).
+                if not cache_space.make_room(
+                        self.folder.parent, max(0, len(data) - old), limit,
+                        saving=os.path.realpath(self.path), locked=True,
+                        trim_own_atom_batches=True):    # a finished scan: its atom batches may go (ADR 0108)
                     return False
                 fd, temp = tempfile.mkstemp(dir=self.folder, prefix=f"{self.identity}-",
                                             suffix=".tmp")
@@ -906,61 +919,28 @@ class IndexedStore:
                 size = sum(v.nbytes for v in part.values()) + 4096 * len(part)
             if size > limit:
                 return
-            with _disk_lock:
-                # Independent servers serialize eviction and publication too.
-                with open(self.folder / ".lock", "a+b") as lock:
-                    try:
-                        import fcntl
+            # Independent servers serialize eviction and publication through
+            # the cache's one space lock (ADR 0108).
+            with _disk_lock, cache_space.space_lock(self.folder.parent):
+                from ffast.io.result_array import sweep_stale_temporaries
 
-                        fcntl.flock(lock, fcntl.LOCK_EX)
-                    except ImportError:
-                        pass
-                    from ffast.io.result_array import sweep_stale_temporaries
-
-                    sweep_stale_temporaries(self.folder)
-                    files = sorted(
-                        (
-                            p
-                            for p in self.folder.iterdir()
-                            if p.suffix in (".npz", ".json", ".bin")
-                        ),
-                        # Tiny identity/schema records, digest sidecars and
-                        # scalar columns prevent full rescans; evict atom
-                        # batches before them. A scan's record files
-                        # (.bin, .tail.npz, .progress.json) are part of its
-                        # identity, and an open scan's are never taken.
-                        key=lambda p: (p.suffix == ".json" or p.name.endswith(("--1--1.npz", CHUNKS_SUFFIX)),
-                                       p.stat().st_mtime_ns),
-                    )
-                    used = sum(p.stat().st_size for p in files)
-                    # The existing complete-array cache shares this parsed
-                    # budget. Result files have their own budget.
-                    legacy = sum(
-                        f.stat().st_size
-                        for d in self.folder.parent.iterdir()
-                        if d.is_dir() and d.name not in ("batches", "results")
-                        for f in d.iterdir()
-                        if f.is_file()
-                    )
-                    for old in files:
-                        if _protected(old, self):
-                            continue
-                        if legacy + used + size <= limit:
-                            break
-                        used -= old.stat().st_size
-                        old.unlink(missing_ok=True)
-                    if legacy + used + size > limit:
-                        return
-                    # Written, flushed to disk, then renamed: a crash leaves a
-                    # whole batch or none. The temporary name carries the
-                    # identity so a stopped scan removes only its own.
-                    fd, temp = tempfile.mkstemp(dir=self.folder, prefix=f"{self.identity}-",
-                                                suffix=".tmp")
-                    with os.fdopen(fd, "wb") as f:
-                        np.savez(f, **part)
-                        f.flush()
-                        os.fsync(f.fileno())
-                    os.replace(temp, self._cache_path(a, b))
+                sweep_stale_temporaries(self.folder)
+                # Other datasets give way, oldest last use first; pinned and
+                # open ones, and this one, are never trimmed.
+                if not cache_space.make_room(
+                        self.folder.parent, size, limit,
+                        saving=os.path.realpath(self.path), locked=True):
+                    return
+                # Written, flushed to disk, then renamed: a crash leaves a
+                # whole batch or none. The temporary name carries the
+                # identity so a stopped scan removes only its own.
+                fd, temp = tempfile.mkstemp(dir=self.folder, prefix=f"{self.identity}-",
+                                            suffix=".tmp")
+                with os.fdopen(fd, "wb") as f:
+                    np.savez(f, **part)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp, self._cache_path(a, b))
         except OSError as exc:
             log.debug(
                 "Parsed batch cache unavailable for %s: %s", self.path, exc

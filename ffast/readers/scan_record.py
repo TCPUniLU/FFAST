@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 
 from ffast.cache.fingerprint import SCHEME
+from ffast.io import cache_space
 
 log = logging.getLogger("FFAST")
 
@@ -136,6 +137,7 @@ class ScanRecord:
             if old and old.get("path") == path and old.get("state") != list(state):
                 try:
                     other.discard()
+                    cache_space.remove_markers(folder, identity)
                 except OSError:
                     pass
 

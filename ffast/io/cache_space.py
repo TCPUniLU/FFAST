@@ -397,11 +397,32 @@ def _evict_dataset(ds, excess):
             h.close()
 
 
-def make_room(root, need, limit, saving=None, locked=False):
+def remove_markers(folder, identity):
+    """Delete the ``.source.json`` and ``.open`` files of a batch identity
+    whose data is gone, unless it is open or still has other files."""
+    folder = Path(folder)
+    for f in folder.glob(f"{identity}*"):
+        if f.name[64:] not in _NOT_RECORDS and not f.name.endswith(".lock"):
+            return
+    handle = _lock_exclusive(folder / f"{identity}{OPEN}")
+    if handle is False:
+        return
+    try:
+        _unlink(folder / f"{identity}{SOURCE}")
+        _unlink(folder / f"{identity}{OPEN}")
+    finally:
+        if handle is not None:
+            handle.close()
+
+
+def make_room(root, need, limit, saving=None, locked=False, trim_own_atom_batches=False):
     """Delete unprotected parts of the cache until ``need`` more bytes fit in
     ``limit``. ``saving`` is the path of the dataset being saved: it is never
-    trimmed. True when the need fits. ``locked`` says the caller already holds
-    ``space_lock`` (the lock is not reentrant)."""
+    trimmed, except that ``trim_own_atom_batches`` (the manifest write at the
+    end of a finished scan, ADR 0108) may delete its per-atom batch files as
+    a last resort, never its small records. True when the need fits.
+    ``locked`` says the caller already holds ``space_lock`` (the lock is not
+    reentrant)."""
     root = Path(root)
     with contextlib.nullcontext() if locked else space_lock(root):
         ents = entries(root)
@@ -419,6 +440,20 @@ def make_room(root, need, limit, saving=None, locked=False):
             if total + need <= limit:
                 break
             total -= _evict_dataset(ds, total + need - limit)
+        if total + need > limit and trim_own_atom_batches and saving is not None:
+            own = [f for e in ents if e.kind == "batches" and e.path == saving
+                   for f in e.files
+                   if len(f.name) > 64 and _ATOM_BATCH.match(f.name[64:])]
+            sized = []
+            for f in own:
+                try:
+                    sized.append((f.stat().st_size, f))
+                except OSError:
+                    pass
+            for _, f in sorted(sized, key=lambda x: (-x[0], x[1].name)):
+                if total + need <= limit:
+                    break
+                total -= _unlink(f)
         return total + need <= limit
 
 
