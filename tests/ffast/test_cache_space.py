@@ -171,3 +171,16 @@ def test_results_and_temporary_files_are_not_entries(tmp_path):
     (tmp_path / "batches").mkdir()
     (tmp_path / "batches" / f"{_identity(1)}-1.tmp").write_bytes(b"x" * MB)
     assert cs.used(tmp_path) == 0
+
+
+def test_two_failing_saves_warn_once(tmp_path, caplog, monkeypatch):
+    monkeypatch.setattr(cs, "_warned_full", False)
+    _array(tmp_path, "a", "/data/a.xyz", 4 * MB)
+    cs.write_pins(tmp_path, ["/data/a.xyz"])
+    with caplog.at_level("WARNING", logger="FFAST"):
+        assert not cs.make_room(tmp_path, 4 * MB, 5 * MB, saving="/data/b.xyz")
+        assert not cs.make_room(tmp_path, 4 * MB, 5 * MB, saving="/data/b.xyz")
+    warnings = [r for r in caplog.records if "full of pinned or open copies" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "ffast-cli cache unpin" in warnings[0].getMessage()
+    assert getattr(warnings[0], "popup", True) is not False

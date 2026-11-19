@@ -415,6 +415,21 @@ def remove_markers(folder, identity):
             handle.close()
 
 
+_warned_full = False       # one warning per server run
+
+
+def _warn_full(total, limit):
+    """Tell the user, once per run, that pinned or open copies fill the cache."""
+    global _warned_full
+    if _warned_full:
+        return
+    _warned_full = True
+    log.warning(
+        "The parsed cache is full of pinned or open copies (%.1f GB of %.1f GB), so a new "
+        "copy is not kept. Unpin with `ffast-cli cache unpin PATH` or raise "
+        "FFAST_PARSED_CACHE_BYTES.", total / 2**30, limit / 2**30)
+
+
 def make_room(root, need, limit, saving=None, locked=False, trim_own_atom_batches=False):
     """Delete unprotected parts of the cache until ``need`` more bytes fit in
     ``limit``. ``saving`` is the path of the dataset being saved: it is never
@@ -431,8 +446,12 @@ def make_room(root, need, limit, saving=None, locked=False, trim_own_atom_batche
             return True
         pins = set(read_pins(root))
         victims = []
+        kept = 0                  # bytes of pinned or open datasets other than the saving one
         for ds in _group(root, ents, pins):
-            if ds.pinned or ds.open or (saving is not None and ds.path == saving):
+            if saving is not None and ds.path == saving:
+                continue
+            if ds.pinned or ds.open:
+                kept += ds.bytes
                 continue
             victims.append(ds)
         victims.sort(key=lambda d: (d.last_used, d.path or ""))
@@ -454,6 +473,8 @@ def make_room(root, need, limit, saving=None, locked=False, trim_own_atom_batche
                 if total + need <= limit:
                     break
                 total -= _unlink(f)
+        if total + need > limit and kept:
+            _warn_full(total, limit)
         return total + need <= limit
 
 
