@@ -69,7 +69,7 @@ def analyse(stats, baseline, real_cases):
     groups = sorted({(c, k) for c, k, *_ in stats})
     # npz-copy (the A/A check) is the same code as the baseline, not a candidate.
     names = {v for _, _, v, _ in stats if not v.startswith("npz")} - {baseline}
-    ruled, reasons = set(), {v: [] for v in names}
+    ruled, worse, dominated = set(), {v: {} for v in names}, {v: [] for v in names}
     for case, cache in groups:
         for name in sorted(names):
             slower = []
@@ -81,15 +81,21 @@ def analyse(stats, baseline, real_cases):
                     ratio, word = verdict(base[:3], cand[:3], ALARM)
                     if word == "worse":
                         ruled.add(name)
-                        reasons[name].append(
-                            f"{measure} worse than {baseline} by x{ratio:.2f} on {case} ({cache})")
+                        worse[name].setdefault(measure, []).append(ratio)
                 slower.append(base[0] <= cand[0])
             # Dominated (the baseline is no worse on every measure): judged on real data,
             # where the compression gain would show; random synthetic positions hide it.
             if case in real_cases and slower and all(slower):
                 ruled.add(name)
-                reasons[name].append(f"dominated by {baseline} on {case} ({cache})")
+                dominated[name].append(f"{case} ({cache})")
     survivors = sorted(names - ruled, key=lambda n: _order(names | {baseline}, baseline).index(n))
+    reasons = {}
+    for name in ruled:
+        text = [f"{m} worse than {baseline} by x{min(r):.2f}" + (f" to x{max(r):.2f}" if len(r) > 1 else "")
+                + f" in {len(r)} of {len(groups)} file runs" for m, r in worse[name].items()]
+        if dominated[name]:
+            text.append(f"dominated by {baseline} on " + ", ".join(dominated[name]))
+        reasons[name] = text
     return {"ruled_out": {n: reasons[n] for n in sorted(ruled)}, "survivors": survivors,
             "go": _go(stats, baseline, survivors, real_cases)}
 
