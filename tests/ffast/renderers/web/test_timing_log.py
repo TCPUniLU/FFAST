@@ -167,7 +167,11 @@ async def test_browser_reports_each_startup_stage_with_its_own_duration(
                     body='<script src="startup.js"></script>',
                 ),
             )
-            await page.clock.install()
+            # Paused before the page loads: only run_for moves time, so real
+            # time spent awaiting each step (machine load) never reaches the
+            # stages. A running clock let it in (docs/flaky-tests.md).
+            await page.clock.install(time=1_000_000)
+            await page.clock.pause_at(1_000_000)
             await page.goto(url.removesuffix("/timing") + "/?launch=launch-1")
             for phase, elapsed in [
                 ("modules", 200),
@@ -202,7 +206,7 @@ async def test_browser_reports_each_startup_stage_with_its_own_duration(
                 ("target_ms", 1000),
                 ("socket_ms", 300),
             ]:
-                assert opened[key] == pytest.approx(expected, abs=10)
+                assert opened[key] == expected
         finally:
             await browser.close()
 
