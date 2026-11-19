@@ -193,10 +193,13 @@ def make_source(file, out, memory_bytes=3 * 2**30, real=False, label=None, extra
                    "--output", str(profile), "--memory-mode", mode, *extra_args]
         done = subprocess.run(command, env=env, capture_output=True, text=True)
         batches = profile / "cache" / "parsed" / "batches"
+        # The batches count when FFAST finished its scan (its manifest, <identity>.json, exists),
+        # even if the profiler's later Basic Errors step stopped: only the batches are used here.
         found = batches.is_dir() and any(
-            (m := BATCH_NAME.match(p.name)) and int(m["a"]) >= 0 for p in batches.iterdir())
+            (m := BATCH_NAME.match(p.name)) and int(m["a"]) >= 0
+            and (batches / f"{m['identity']}.json").is_file() for p in batches.iterdir())
         attempts.append((mode, done.returncode, found))
-        if done.returncode == 0 and found:
+        if found:
             break
     else:
         tail = (done.stdout + done.stderr)[-1500:]
