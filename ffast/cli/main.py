@@ -620,6 +620,10 @@ def build_parser() -> argparse.ArgumentParser:
     keys_cmd.add_argument("path", help="Path to an extxyz / ASE-readable file")
     keys_cmd.set_defaults(func=cmd_dataset_keys)
 
+    # ffast cache ... (parsed cache pins and deletes, ADR 0108)
+    from ffast.cli import cache as cache_cli
+    cache_cli.register(sub)
+
     return parser
 
 
