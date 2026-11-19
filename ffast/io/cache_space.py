@@ -127,6 +127,13 @@ def _batch_entries(root):
             continue
         m = _IDENTITY.match(name)
         if not m or len(name) <= 64 or name[64] not in ".-":
+            # Not made by a store: counted against the budget, evicted as a
+            # small record, never locked.
+            if not name.startswith(".") and name.endswith((".npz", ".json", ".bin")):
+                try:
+                    groups.setdefault(name, []).append((f, f.stat()))
+                except OSError:
+                    pass
             continue
         if name == f"{name[:64]}.lock":       # a scan's lock, held by the scanner
             continue
@@ -168,9 +175,10 @@ def entries(root):
     return out
 
 
-def used(root):
-    """Bytes of every entry: the one number the budget is measured against."""
-    return sum(e.bytes for e in entries(root))
+def used(root, kind=None):
+    """Bytes of every entry (or of one ``kind``): the one number the budget is
+    measured against."""
+    return sum(e.bytes for e in entries(root) if kind in (None, e.kind))
 
 
 def _group(root, ents, pins):
@@ -333,6 +341,8 @@ def _lock_all(ents):
     of them is open."""
     handles = []
     for e in ents:
+        if e.kind == "batches" and len(e.key) != 64:
+            continue
         h = _lock_exclusive(e.open_file)
         if h is False:
             for g in handles:

@@ -14,11 +14,12 @@ import json
 import logging
 import os
 import shutil
-import time
+import weakref
 from pathlib import Path
 
 import numpy as np
 
+from ffast.io import cache_space
 from ffast.io.extxyz_arrays import FrameArrays
 
 logger = logging.getLogger("FFAST")
@@ -33,16 +34,12 @@ _META = "meta.json"
 
 
 def max_bytes(folder):
-    """At most MAX_BYTES, and at most a quarter of the disk's free space."""
+    """The most the whole-array entries may hold: at most MAX_BYTES and the
+    parsed disk limit minus the batches (both share that budget), and at most
+    a quarter of the disk's free space."""
     from ffast.io.budget import budget
     maximum = min(MAX_BYTES, budget().parsed_limit)
-    # Incremental and complete-array entries use the same parsed disk budget.
-    try:
-        batches = sum(p.stat().st_size for p in (Path(folder) / "batches").iterdir()
-                      if p.suffix in (".npz", ".json", ".bin"))
-    except OSError:
-        batches = 0
-    maximum = max(0, maximum - batches)
+    maximum = max(0, maximum - cache_space.used(folder, "batches"))
     try:
         free = shutil.disk_usage(folder).free
     except OSError:
@@ -68,6 +65,10 @@ def load(index):
         meta = json.loads((entry / _META).read_text())
     except (OSError, ValueError):
         return None
+    # Open for as long as the arrays live: no process evicts an open copy.
+    handle = cache_space.hold_open(entry / cache_space.OPEN, needs=entry / _META)
+    if handle is None:                            # evicted while we opened it
+        return None
     try:
         def arr(name):
             return np.load(entry / name, mmap_mode="r", allow_pickle=False)
@@ -85,9 +86,11 @@ def load(index):
             values={k: arr(f) for k, f in meta["values"].items()},
         )
     except (OSError, ValueError, KeyError) as exc:
+        handle.close()
         logger.warning("The saved arrays of %s could not be opened (%s); reading the file.",
                        os.path.basename(index.path), exc, extra={"popup": False})
         return None
+    weakref.finalize(arrays, handle.close)
     os.utime(entry / _META)                       # most recently used
     return arrays
 
@@ -106,12 +109,17 @@ def save(index, arrays):
             logger.info("Not keeping the arrays of %s: %.1f GB is more than the %.1f GB allowed.",
                         name, size / 2**30, limit / 2**30)
             return
-        _make_room(folder, limit - size)
+        source = os.path.realpath(index.path)
+        total = limit + cache_space.used(folder, "batches")
+        if not cache_space.make_room(folder, size, total, saving=source):
+            logger.info("Not keeping the arrays of %s: the rest of the parsed cache is pinned or open.",
+                        name)
+            return
         entry = folder / _key(index)
         tmp = folder / f".{entry.name}.{os.getpid()}.tmp"
         shutil.rmtree(tmp, ignore_errors=True)
         tmp.mkdir()
-        meta = {"path": os.path.abspath(index.path), "step": getattr(index, "step", 1),
+        meta = {"path": source, "step": getattr(index, "step", 1),
                 "properties": arrays.properties, "essential": arrays.essential,
                 "extras": arrays.extras, "columns": {}, "missing": {}, "values": {}}
         for field in ("counts", "numbers", "positions", "cells", "pbc"):
@@ -122,8 +130,13 @@ def save(index, arrays):
                 np.save(tmp / file, np.asarray(value), allow_pickle=False)
                 meta[group][key] = file
         (tmp / _META).write_text(json.dumps(meta))      # last: an entry without it is never opened
-        shutil.rmtree(entry, ignore_errors=True)
-        os.replace(tmp, entry)
+        with cache_space.space_lock(folder):
+            old = cache_space.is_open(entry / cache_space.OPEN)
+            if old:                    # the same file and state is open: keep it
+                shutil.rmtree(tmp, ignore_errors=True)
+            else:
+                shutil.rmtree(entry, ignore_errors=True)
+                os.replace(tmp, entry)
     except Exception as exc:
         logger.warning("Could not keep the arrays of %s for the next load: %s", name, exc,
                        extra={"popup": False})
@@ -141,28 +154,3 @@ def _nbytes(arrays):
 def _entry_bytes(entry):
     return sum(f.stat().st_size for f in entry.iterdir() if f.is_file())
 
-
-def _make_room(folder, budget):
-    """Delete least recently used entries until the rest fit in ``budget``.
-    Half-written entries (no meta.json) older than an hour go too."""
-    entries = []
-    for entry in folder.iterdir():
-        if entry.name in ("batches", "results"):
-            continue
-        if not entry.is_dir():
-            continue
-        meta = entry / _META
-        try:
-            used = meta.stat().st_mtime
-        except OSError:
-            if time.time() - entry.stat().st_mtime > 3600:
-                shutil.rmtree(entry, ignore_errors=True)
-            continue
-        entries.append((used, entry, _entry_bytes(entry)))
-    entries.sort()
-    total = sum(n for _, _, n in entries)
-    for _, entry, n in entries:
-        if total <= budget:
-            break
-        shutil.rmtree(entry, ignore_errors=True)
-        total -= n

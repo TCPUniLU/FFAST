@@ -1,4 +1,5 @@
 """A file's arrays are kept on disk and opened by the next load (ADR 0083)."""
+import gc
 import os
 
 import numpy as np
@@ -67,22 +68,44 @@ def test_each_stride_is_kept_apart(tmp_path, reads):
     assert len(reads) == 2
 
 
+def _entries():
+    return [d for d in frame_cache._folder().iterdir()
+            if d.is_dir() and d.name not in ("batches", "results") and not d.name.startswith(".")]
+
+
 def test_the_least_recently_used_entry_makes_room(tmp_path, monkeypatch, reads):
     a, b = _write(tmp_path), _write(tmp_path, "variable.extxyz")
     _load(a)
-    kept_a = sum(f.stat().st_size for f in next(frame_cache._folder().iterdir()).iterdir())
+    kept_a = sum(f.stat().st_size for f in _entries()[0].iterdir())
     size_b = frame_cache._nbytes(xa.read_frames(fi.scan(b), workers=1))
     monkeypatch.setattr(frame_cache, "MAX_BYTES", kept_a + size_b - 1)   # one fits, not both
+    fi.clear_memory_cache()
+    gc.collect()                                          # a is no longer open
     _load(b)                                              # pushes a out
+    fi.clear_memory_cache()
+    gc.collect()
     _load(a)
     assert len(reads) == 4                                # a, b's size, b, a again
-    assert len(list(frame_cache._folder().iterdir())) == 1
+    assert len(_entries()) == 1
+
+
+def test_an_entry_open_in_this_process_is_not_evicted_by_a_later_save(tmp_path, monkeypatch, reads):
+    a, b = _write(tmp_path), _write(tmp_path, "variable.extxyz")
+    first = _load(a)                                      # stays open: first holds its arrays
+    kept_a = sum(f.stat().st_size for f in _entries()[0].iterdir())
+    size_b = frame_cache._nbytes(xa.read_frames(fi.scan(b), workers=1))
+    monkeypatch.setattr(frame_cache, "MAX_BYTES", kept_a + size_b - 1)
+    second = _load(b)                                     # does not fit beside a, and a is open
+    assert len(_entries()) == 1
+    assert second.N and first.N
+    _load(a)
+    assert len(reads) == 3                                # a, b's size, b: a was not read again
 
 
 def test_a_broken_entry_is_read_again(tmp_path, reads):
     path = _write(tmp_path)
     _load(path)
-    entry = next(frame_cache._folder().iterdir())
+    entry = _entries()[0]
     (entry / "positions.npy").write_bytes(b"garbage")
     assert _load(path).N == 3
     assert len(reads) == 2

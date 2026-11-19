@@ -65,10 +65,12 @@ import logging
 import os
 import shutil
 import threading
+import weakref
 from collections import deque
 
 import numpy as np
 
+from ffast.io import cache_space
 from ffast.io import extxyz_arrays as xa
 from ffast.io import frame_cache, frame_index
 from ffast.io.extxyz_arrays import MEMORY_FLOOR, MEMORY_SHARE, NotEnoughMemory, NotFast, _gib
@@ -264,10 +266,30 @@ def _kept_load(reader_class, path, step):
     try:
         entry = frame_cache._folder() / _kept_key(reader_class, path, step)
         meta = json.loads((entry / _META).read_text())
+    except (OSError, ValueError):
+        return None
+    # Open for as long as the arrays live: no process evicts an open copy.
+    handle = cache_space.hold_open(entry / cache_space.OPEN, needs=entry / _META)
+    if handle is None:
+        return None
+    try:
         arrays = {key: np.load(entry / file, mmap_mode="r", allow_pickle=False)
                   for key, file in meta["arrays"].items()}
     except (OSError, ValueError, KeyError):
+        handle.close()
         return None
+    # The lock lasts as long as any of the arrays is alive (a dict cannot be
+    # weakly referenced, its arrays can).
+    alive = [len(arrays)]
+
+    def release():
+        alive[0] -= 1
+        if alive[0] <= 0:
+            handle.close()
+    for value in arrays.values():
+        weakref.finalize(value, release)
+    if not arrays:
+        handle.close()
     os.utime(entry / _META)                    # most recently used
     return arrays, int(meta["n_file_frames"])
 
@@ -284,7 +306,12 @@ def _kept_save(reader_class, path, step, arrays, n_file_frames):
             logger.info("Not keeping the arrays of %s: %.1f GB is more than the %.1f GB allowed.",
                         name, size / 2**30, limit / 2**30)
             return
-        frame_cache._make_room(folder, limit - size)
+        source = os.path.realpath(path)
+        total = limit + cache_space.used(folder, "batches")
+        if not cache_space.make_room(folder, size, total, saving=source):
+            logger.info("Not keeping the arrays of %s: the rest of the parsed cache is pinned or open.",
+                        name)
+            return
         entry = folder / _kept_key(reader_class, path, step)
         tmp = folder / f".{entry.name}.{os.getpid()}.tmp"
         shutil.rmtree(tmp, ignore_errors=True)
@@ -294,10 +321,14 @@ def _kept_save(reader_class, path, step, arrays, n_file_frames):
             files[key] = f"a{i}.npy"
             np.save(tmp / files[key], np.asarray(value), allow_pickle=False)
         (tmp / _META).write_text(json.dumps({
-            "path": os.path.abspath(path), "reader": reader_class.name, "step": step,
+            "path": source, "reader": reader_class.name, "step": step,
             "n_file_frames": n_file_frames, "arrays": files}))   # last: no meta, never opened
-        shutil.rmtree(entry, ignore_errors=True)
-        os.replace(tmp, entry)
+        with cache_space.space_lock(folder):
+            if cache_space.is_open(entry / cache_space.OPEN):
+                shutil.rmtree(tmp, ignore_errors=True)       # the same copy is open: keep it
+            else:
+                shutil.rmtree(entry, ignore_errors=True)
+                os.replace(tmp, entry)
     except Exception as exc:
         logger.warning("Could not keep the arrays of %s for the next load: %s", name, exc,
                        extra={"popup": False})
