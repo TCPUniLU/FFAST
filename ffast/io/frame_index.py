@@ -5,11 +5,13 @@ ASE's extxyz reader walks the whole file to list frame starts on every
 and in `~/.ffast/frame-index`), and read frames by seeking
 (docs/implementation/2026-11-01-frame-index.md).
 """
+import contextlib
 import hashlib
 import io
 import logging
 import os
 import threading
+import weakref
 from pathlib import Path
 
 import numpy as np
@@ -155,6 +157,32 @@ def _more_frames_follow(f):
     return False
 
 
+class HeldDigest:
+    """A window's digest job, and the memory reservation for the buffer its
+    thread holds. ``result()`` waits for the hash, then releases the
+    reservation; ``release()`` drops it (a cancel or an error), and so does
+    losing the last reference (ADR 0111)."""
+
+    def __init__(self, job, hold):
+        self._job = job
+        self._hold = hold
+        self._value = None
+        self._lock = threading.Lock()       # the scan and the parsing thread may both wait
+        weakref.finalize(self, hold.close)
+
+    def result(self):
+        with self._lock:
+            if self._value is None:
+                try:
+                    self._value = bytes(self._job.result())
+                finally:
+                    self._hold.close()
+            return self._value
+
+    def release(self):
+        self._hold.close()
+
+
 FIND_BYTES = 256 * 2**20       # the fast parser finds frames in this much text per call
 
 
@@ -208,31 +236,54 @@ def scan(path, *, progress=None, should_stop=None, on_batch=None, batch_bytes=No
         parts_s, parts_c, n, threads = [], [], 0, fast_threads()
         from ffast.cache import source_digest
         same_scheme = getattr(fast, "SOURCE_SCHEME", None) == source_digest.SCHEME
-        while True:
-            owner = budget()
-            span = min(batch_bytes or FIND_BYTES, max(1, (owner.limit - owner.used) // 4))
-            before = pos
-            with owner.reserve(span * 3):
-                found = fast.find_frames(str(path), pos, span, threads)
-            s, c, pos, state = found[:4]
-            # A finder from before ADR 0111 returns four values; a different
-            # digest scheme is not one this FFAST can use.
-            digest = found[4] if len(found) > 4 and same_scheme else None
-            parts_s.append(s)
-            parts_c.append(c)
-            n += len(s)
-            if on_batch is not None:
-                if len(s):
-                    on_batch(s, c, pos, digest=digest, window=(before, pos))
-                if state == fast.FIND_PYTHON:
-                    from ffast.io.extxyz_arrays import NotFast
-                    raise NotFast("The frame index requires the Python scanner")
-            if state != fast.FIND_MORE:
-                break
-            if progress:
-                if should_stop and should_stop():
-                    raise FrameIndexCancelled(path)
-                progress(n)
+        held = None          # the digest of the last window, while its hash may still run
+        want_digest = on_batch is not None and same_scheme
+        try:
+            while True:
+                owner = budget()
+                span = min(batch_bytes or FIND_BYTES, max(1, (owner.limit - owner.used) // 4))
+                if held is not None:
+                    held.result()           # at most one window waits for its hash (ADR 0111)
+                    held = None
+                before = pos
+                hold = contextlib.ExitStack()
+                try:
+                    if want_digest:
+                        # The window's buffer outlives this call while it is hashed.
+                        hold.enter_context(owner.reserve(span))
+                    with owner.reserve(span * 3):
+                        found = (fast.find_frames(str(path), pos, span, threads, want_digest)
+                                 if same_scheme else fast.find_frames(str(path), pos, span, threads))
+                except BaseException:
+                    hold.close()
+                    raise
+                s, c, pos, state = found[:4]
+                # A finder from before ADR 0111 returns four values; a different
+                # digest scheme is not one this FFAST can use.
+                digest = found[4] if len(found) > 4 and want_digest else None
+                if digest is not None and callable(getattr(digest, "result", None)):
+                    digest = held = HeldDigest(digest, hold)
+                else:
+                    hold.close()
+                parts_s.append(s)
+                parts_c.append(c)
+                n += len(s)
+                if on_batch is not None:
+                    if len(s):
+                        on_batch(s, c, pos, digest=digest, window=(before, pos))
+                    if state == fast.FIND_PYTHON:
+                        from ffast.io.extxyz_arrays import NotFast
+                        raise NotFast("The frame index requires the Python scanner")
+                if state != fast.FIND_MORE:
+                    break
+                if progress:
+                    if should_stop and should_stop():
+                        raise FrameIndexCancelled(path)
+                    progress(n)
+        except BaseException:
+            if held is not None:
+                held.release()              # a cancel or an error drops the job
+            raise
         found_s, found_c = np.concatenate(parts_s), np.concatenate(parts_c)
         if state == fast.FIND_END:
             return FrameIndex(path, np.append(found_s, pos), st.st_size, st.st_mtime_ns, found_c)

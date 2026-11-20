@@ -112,3 +112,120 @@ def test_a_finder_with_another_scheme_gives_no_digest(tmp_path, monkeypatch):
     frame_index.scan(str(path), on_batch=lambda s, c, end, digest=None, window=None:
                      digests.append(digest))
     assert digests == [None]
+
+
+# -- at most one window waits for its hash, and its buffer is counted (ADR 0111, A2) --------
+
+class SpyJob:
+    """The finder's digest job, noting when somebody waited for it."""
+
+    def __init__(self, job):
+        self.job, self.called = job, False
+
+    def result(self):
+        self.called = True
+        return self.job.result()
+
+
+@pytest.fixture
+def spied(monkeypatch, tmp_path):
+    import ffast_xyz
+    from ffast.io import budget as resources
+    if getattr(ffast_xyz, "SOURCE_SCHEME", None) != sd.SCHEME:
+        pytest.skip("the installed ffast-xyz predates source digests")
+    owner = resources.Budget(ram_bytes=512 * 1024, parsed_bytes=2**30, result_bytes=8 * 2**20)
+    owner.limit = 256 * 2**20
+    monkeypatch.setattr(resources, "_budget", owner)
+    real, jobs = ffast_xyz.find_frames, []
+
+    def spy(*args, **kwargs):
+        s, c, end, state, job = real(*args, **kwargs)
+        jobs.append(SpyJob(job))
+        return s, c, end, state, jobs[-1]
+
+    monkeypatch.setattr(ffast_xyz, "find_frames", spy)
+    return owner, jobs
+
+
+@needs_fast
+def test_a_window_waits_for_the_hash_of_the_one_before_it(tmp_path, spied, monkeypatch):
+    owner, jobs = spied
+    path = write_xyz(tmp_path / "a.xyz")
+    waited = []
+    import ffast_xyz
+    real = ffast_xyz.find_frames
+
+    def checking(*args, **kwargs):
+        waited.append(jobs[-1].called if jobs else True)     # the previous window's job
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ffast_xyz, "find_frames", checking)
+    frame_index.scan(str(path), on_batch=lambda *a, **k: None, batch_bytes=200_000)
+    assert len(waited) > 5 and all(waited)
+
+
+@needs_fast
+def test_the_budget_counts_the_buffer_while_its_hash_is_pending_and_frees_it_after(tmp_path, spied):
+    owner, jobs = spied
+    path = write_xyz(tmp_path / "a.xyz")
+    base = owner.used
+    seen = []
+
+    def on_batch(s, c, end, digest=None, window=None):
+        seen.append(owner.used - base)                      # the hash has not been collected
+        digest.result()
+        seen.append(owner.used - base)
+
+    frame_index.scan(str(path), on_batch=on_batch, batch_bytes=200_000)
+    pending, collected = seen[0::2], seen[1::2]
+    assert all(p >= 200_000 for p in pending)               # the window's buffer is counted
+    assert all(c == 0 for c in collected)                   # and given back when the hash is read
+    assert owner.used == base and owner.pending == 0
+
+
+@needs_fast
+def test_a_cancel_gives_the_buffer_back(tmp_path, spied):
+    owner, jobs = spied
+    path = write_xyz(tmp_path / "a.xyz")
+    base = owner.used
+
+    def on_batch(s, c, end, digest=None, window=None):
+        assert owner.used - base >= 200_000
+        raise frame_index.FrameIndexCancelled(path)
+
+    with pytest.raises(frame_index.FrameIndexCancelled):
+        frame_index.scan(str(path), on_batch=on_batch, batch_bytes=200_000)
+    assert owner.used == base and owner.pending == 0
+
+
+@needs_fast
+def test_a_scan_nobody_watches_does_not_hash(tmp_path, monkeypatch):
+    import ffast_xyz
+    path = write_xyz(tmp_path / "plain.xyz", frames=200)
+    seen = []
+    real = ffast_xyz.find_frames
+    monkeypatch.setattr(ffast_xyz, "find_frames", lambda *a, **k: seen.append(a) or real(*a, **k))
+    if getattr(ffast_xyz, "SOURCE_SCHEME", None) != sd.SCHEME:
+        pytest.skip("the installed ffast-xyz predates source digests")
+    frame_index.scan(str(path))
+    assert seen and all(len(a) == 5 and a[4] is False for a in seen)
+
+
+@needs_fast
+def test_two_threads_may_wait_for_one_digest(tmp_path):
+    import contextlib
+    import threading
+
+    import ffast_xyz
+    if getattr(ffast_xyz, "SOURCE_SCHEME", None) != sd.SCHEME:
+        pytest.skip("the installed ffast-xyz predates source digests")
+    path = write_xyz(tmp_path / "two.xyz", frames=9000, atoms=60)
+    size = path.stat().st_size
+    *_, job = ffast_xyz.find_frames(str(path), 0, size, 4)
+    held = frame_index.HeldDigest(job, contextlib.ExitStack())
+    out = []
+    threads = [threading.Thread(target=lambda: out.append(held.result())) for _ in range(4)]
+    [t.start() for t in threads]
+    [t.join(timeout=60) for t in threads]
+    assert len(out) == 4 and len(set(out)) == 1
+    assert out[0] == sd.range_digest(path.read_bytes())

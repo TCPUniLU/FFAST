@@ -1324,15 +1324,17 @@ fn find_in(data: &[u8], nl: Vec<usize>, base: usize, at_eof: bool, limit: usize)
 /// frames as `frame_index.scan`; anything unusual is left to it (FIND_PYTHON).
 /// `digest` is a job whose `result()` is the 32-byte `SOURCE_SCHEME` digest of
 /// bytes `[offset, next)`, computed in the background.
-/// `threads` look for the line ends and hash the bytes.
+/// `threads` look for the line ends and hash the bytes. Without `digest` no
+/// hash is computed and the job's result is 32 zero bytes.
 #[pyfunction]
-#[pyo3(signature = (path, offset, limit, threads=1))]
+#[pyo3(signature = (path, offset, limit, threads=1, digest=true))]
 fn find_frames<'py>(
     py: Python<'py>,
     path: &str,
     offset: u64,
     limit: u64,
     threads: usize,
+    digest: bool,
 ) -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8, Bound<'py, DigestJob>)> {
     let file = std::fs::File::open(path)?;
     let size = file.metadata()?.len();
@@ -1353,7 +1355,11 @@ fn find_frames<'py>(
                     // The digest covers the bytes this call consumed, hashed
                     // once, from the read that succeeded, on a thread of its
                     // own so the window goes to the parser at once (ADR 0111).
-                    let job = digest_in_background(data, next - offset as usize, (threads / 2).max(1));
+                    let job = if digest {
+                        digest_in_background(data, next - offset as usize, (threads / 2).max(1))
+                    } else {
+                        DigestJob { state: std::sync::Mutex::new(JobState::Done([0; 32])) }
+                    };
                     return Ok((starts, counts, next, state, job));
                 }
                 want = want.saturating_mul(2); // one frame longer than the bytes read
