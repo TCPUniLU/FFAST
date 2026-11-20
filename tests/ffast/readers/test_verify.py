@@ -11,7 +11,7 @@ from ffast.io import cache_space
 from ffast.readers import bundle, text, verify
 from ffast.readers.indexed import CHUNKS_SUFFIX
 from tests.ffast.readers.test_bundle_open import exported, opened  # noqa: F401
-from tests.ffast.readers.test_scan_naming import folder, scan, write_xyz  # noqa: F401
+from tests.ffast.readers.test_scan_naming import folder, forget_ram, scan, write_xyz  # noqa: F401
 from tests.ffast.readers.test_scan_record import cancel_after
 
 pytestmark = pytest.mark.skipif(not text.fast_parser_usable(), reason="Optional fast parser unavailable")
@@ -209,11 +209,11 @@ def test_a_file_never_loaded_has_nothing_to_check(folder, tmp_path):
 
 
 def test_the_name_verify_looks_for_is_the_name_the_scan_gave(folder, tmp_path):
-    from ffast.readers.indexed import file_state
+    from ffast.readers.indexed import IndexedStore, file_state
     from ffast.readers.xyz_reader import XyzReader
     path = write_xyz(tmp_path / "a.xyz")
     identity = scanned(path)
-    assert verify._identity(XyzReader, os.path.abspath(path), file_state(path)) == identity
+    assert IndexedStore.identity_of(XyzReader, os.path.abspath(path), file_state(path)) == identity
 
 
 def test_a_changed_source_deletes_only_its_own_identity_not_other_copies_of_the_path(folder, tmp_path):
@@ -229,3 +229,53 @@ def test_a_changed_source_deletes_only_its_own_identity_not_other_copies_of_the_
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
     assert verify.verify(path, root=folder.parent).exit_code == 1
     assert not list(folder.glob(f"{identity}*")) and (folder / f"{other}.json").exists()
+
+
+def test_a_deleted_batch_is_written_again_when_its_frames_are_read_and_the_next_check_is_clean(folder, tmp_path):
+    from ffast.readers.xyz_reader import XyzReader
+    path = write_xyz(tmp_path / "a.xyz")
+    identity = scanned(path)
+    victim = batch_files(folder, identity)[1]
+    before = sorted(p.name for p in batch_files(folder, identity))
+    damage(victim)
+    report = verify.verify(path, root=folder.parent)
+    assert report.exit_code == 1 and not victim.exists()
+    deleted = [os.path.basename(f) for f in report.changed if f.endswith(".npz")]
+    assert victim.name in deleted
+    # A load from the manifest (no scan) reads those frames from the source and keeps them.
+    arrays, *_ = text.read_level2(XyzReader, path, memory_mode="saving", workers=1)
+    store = arrays.store
+    forget_ram()                                  # the scan left the parsed windows in memory
+    for name in deleted:
+        a, b = (int(x) for x in name[:-4].split("-")[-2:])
+        assert not (folder / name).exists()
+        part = store._part(a, b)                  # what a bulk read of those frames does
+        assert part["forces:forces"].shape[0] == int(store.offsets[b] - store.offsets[a])
+        assert (folder / name).exists()
+    assert sorted(p.name for p in batch_files(folder, identity)) == before
+    del store, arrays
+    gc.collect()
+    again = verify.verify(path, root=folder.parent)
+    assert again.exit_code == 0 and not again.changed, [(p.name, p.status, p.detail) for p in again.parts]
+
+
+def test_a_batch_written_again_keeps_the_level_of_its_siblings(folder, tmp_path):
+    from ffast.io import budget as resources
+    from ffast.readers.xyz_reader import XyzReader
+    resources.budget().parsed_limit = 1_000_000           # the per-frame values only
+    path = write_xyz(tmp_path / "a.xyz")
+    identity = scanned(path)
+    files = batch_files(folder, identity)
+    assert len(files) >= 3
+    with np.load(files[0]) as z:
+        assert "__omitted__" in z.files
+    gone = files[1]
+    gone.unlink()
+    arrays, *_ = text.read_level2(XyzReader, path, memory_mode="saving", workers=1)
+    forget_ram()
+    a, b = (int(x) for x in gone.stem.split("-")[-2:])
+    arrays.store._part(a, b)
+    assert gone.exists()
+    with np.load(gone) as healed, np.load(files[0]) as sibling:
+        assert sorted(healed.files) == sorted(sibling.files)
+        assert healed["__omitted__"].tolist() == sibling["__omitted__"].tolist()

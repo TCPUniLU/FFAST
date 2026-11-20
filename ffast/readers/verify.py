@@ -149,7 +149,7 @@ def _compare_new(col):
         col.compared += 1
 
 
-def _check_batches(entries, info, chunks, progress):
+def _check_batches(entries, info, chunks, progress, threads=1):
     """Hash every column of every batch in order and compare with ``chunks``.
 
     ``entries`` is ``[(a, b, file, bytes or None)]`` in frame order. Returns
@@ -164,11 +164,31 @@ def _check_batches(entries, info, chunks, progress):
         member = f"{np.dtype(facts['dtype']).str}|{key}"
         cols[key] = _Column(key, facts, chunks[member] if member in chunks else None)
     unreadable, missing = {}, []
+    from concurrent.futures import ThreadPoolExecutor
+
+    def read(entry):
+        _, _, file, nbytes = entry
+        if nbytes is not None and Path(file).stat().st_size != nbytes:
+            raise ValueError(f"it has {Path(file).stat().st_size:,} bytes, not the {nbytes:,} it was written with")
+        return _read_columns(file)
+
+    # The next batch is read while this one is hashed, and the columns of a
+    # batch are hashed side by side (hashlib lets go of the GIL): two batches
+    # are in memory at a time.
+    pool = ThreadPoolExecutor(max_workers=max(2, threads))
+    try:
+        _run_batches(entries, cols, unreadable, missing, pool, read, progress, per_atom)
+    finally:
+        pool.shutdown(wait=True)
+    return _blame(entries, cols, unreadable, missing)
+
+
+def _run_batches(entries, cols, unreadable, missing, pool, read, progress, per_atom):
+    ahead = pool.submit(read, entries[0]) if entries else None
     for index, (a, b, file, nbytes) in enumerate(entries):
+        current, ahead = ahead, (pool.submit(read, entries[index + 1]) if index + 1 < len(entries) else None)
         try:
-            if nbytes is not None and Path(file).stat().st_size != nbytes:
-                raise ValueError(f"it has {Path(file).stat().st_size:,} bytes, not the {nbytes:,} it was written with")
-            part, omitted = _read_columns(file)
+            part, omitted = current.result()
         except FileNotFoundError:
             missing.append((a, b))
             for col in cols.values():
@@ -180,29 +200,36 @@ def _check_batches(entries, info, chunks, progress):
                 col.stopped = col.stopped or "damaged"
             continue
         atoms = int(part["numbers"].shape[0]) if "numbers" in part else None
-        for key, col in cols.items():
+
+        def feed(item, index=index, a=a, b=b, part=part, omitted=omitted, atoms=atoms):
+            key, col = item
             if col.stopped:
-                continue
+                return
             value = part.get(key)
             if value is None:
                 if key in omitted:
                     col.stopped = "not cached"
-                    continue
+                    return
                 if col.dtype.kind not in "fc":
                     unreadable[(a, b)] = f"the column {key} is missing"
                     col.stopped = "damaged"
-                    continue
+                    return
                 rows = (atoms if per_atom(key) else b - a)
                 if rows is None:
                     col.stopped = "not cached"
-                    continue
+                    return
                 value = np.full((rows, *col.tail), np.nan, dtype=np.float64)
             col.spans.append((index, col.rows, col.rows + value.shape[0]))
             col.rows += value.shape[0]
             col.hasher.update(value.astype(col.dtype, copy=False))
             _compare_new(col)
+
+        list(pool.map(feed, list(cols.items())))
         if progress:
             progress(index + 1, len(entries))
+
+
+def _blame(entries, cols, unreadable, missing):
     bad = {}
     not_cached = []
     for key, col in cols.items():
@@ -232,9 +259,9 @@ def _check_batches(entries, info, chunks, progress):
     return cols, bad, not_cached
 
 
-def _batch_part(entries, info, chunks, progress, *, missing_is_difference):
+def _batch_part(entries, info, chunks, progress, *, missing_is_difference, threads=1):
     """The batch part (and the 'not cached' part) of a check."""
-    cols, bad, not_cached = _check_batches(entries, info, chunks, progress)
+    cols, bad, not_cached = _check_batches(entries, info, chunks, progress, threads)
     files = {(a, b): file for a, b, file, _ in entries}
     gone = {k for k, v in bad.items() if v == ["__missing__"]}
     if not missing_is_difference:
@@ -295,6 +322,9 @@ def verify(path, *, root=None, threads=None, progress=None) -> Report:
     parsed-cache root (default: the usual one). ``progress(stage, done,
     total)`` is called while it reads."""
     path = Path(path)
+    if not threads:
+        from ffast.readers.text import fast_threads
+        threads = fast_threads()
     if path.name == bundle.DESCRIPTION or path.is_dir():
         return _verify_bundle(path, threads, progress)
     return _verify_cache(path, root, threads, progress)
@@ -338,7 +368,8 @@ def _verify_bundle(path, threads, progress):
         report.parts.append(Part("description", NOT_CHECKED, f"{bundle.DESCRIPTION} is damaged ({exc})"))
         return report
     report.parts.extend(_source_part(chunks, record, folder, threads, progress))
-    parts, _ = _batch_part(entries, info, chunks, _stage(progress, "batches"), missing_is_difference=True)
+    parts, _ = _batch_part(entries, info, chunks, _stage(progress, "batches"), missing_is_difference=True,
+                           threads=threads)
     report.parts.extend(parts)
     return report
 
@@ -354,20 +385,9 @@ def _source_part(chunks, record, folder, threads, progress):
     return [_check_source(source, *recorded, threads, _stage(progress, "source"))]
 
 
-def _identity(reader, path, state):
-    """The name of the full parsed cache of ``path``: the formula of
-    ``IndexedStore.__init__`` for a full, unsampled load (a test pins them)."""
-    import hashlib
-    from ffast.cache.fingerprint import SCHEME
-    h = hashlib.sha256(repr((1, reader.name, getattr(reader, "cache_version", 1), path, state,
-                             SCHEME)).encode())
-    h.update(b"all")
-    return h.hexdigest()
-
-
 def _verify_cache(path, root, threads, progress):
     from ffast.io import cache_space, frame_cache
-    from ffast.readers.indexed import file_state
+    from ffast.readers.indexed import IndexedStore, file_state
     from ffast.readers.xyz_reader import XyzReader
 
     report = Report(str(path), "cache")
@@ -377,7 +397,7 @@ def _verify_cache(path, root, threads, progress):
     root = Path(root) if root is not None else frame_cache._folder()
     folder = root / "batches"
     absolute = os.path.abspath(path)
-    identity = _identity(XyzReader, absolute, file_state(absolute))
+    identity = IndexedStore.identity_of(XyzReader, absolute, file_state(absolute))
     manifest_file = folder / f"{identity}.json"
     try:
         manifest = json.loads(manifest_file.read_text())
@@ -406,7 +426,8 @@ def _verify_cache(path, root, threads, progress):
                    else _check_source(absolute, *recorded, threads, _stage(progress, "source")))
     report.parts.append(source_part)
     entries = [(a, b, folder / f"{identity}-{a}-{b}.npz", None) for a, b in ranges]
-    parts, bad = _batch_part(entries, info, chunks, _stage(progress, "batches"), missing_is_difference=False)
+    parts, bad = _batch_part(entries, info, chunks, _stage(progress, "batches"), missing_is_difference=False,
+                           threads=threads)
     if source_part.status == VERIFIED:
         for part in parts:
             if part.name == "not cached":

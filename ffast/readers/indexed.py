@@ -261,21 +261,11 @@ class IndexedStore:
         self.workers = workers
         self.use_cache = bool(use_cache and budget().parsed_limit)
         self.folder = frame_cache._folder() / "batches"
-        identity = (
-            1,
-            reader.name,
-            getattr(reader, "cache_version", 1),
-            self.path,
-            self.state,
-            SCHEME,
-        )
-        h = hashlib.sha256(repr(identity).encode())
         # A full, unsampled load is named by the file alone ("all"), so a scan
         # can name its cache before it knows its frames (ADR 0107). Any other
         # selection is named by its frame list.
         full = full or scan_source
-        h.update(b"all" if full else self.frames)
-        self.identity = h.hexdigest()
+        self.identity = self.identity_of(reader, self.path, self.state, None if full else self.frames)
         self._hold_cache_open()
         self.info = {}
         self.sample = {}
@@ -332,6 +322,16 @@ class IndexedStore:
         self._finish_small()
         self._save_manifest()
         self._warming = False
+
+    @staticmethod
+    def identity_of(reader, path, state, frames=None):
+        """The name of a cache copy: the reader, the file and its state, and
+        the frames (None for a full, unsampled load). ``verify`` finds a
+        file's cache with it."""
+        h = hashlib.sha256(repr((1, reader.name, getattr(reader, "cache_version", 1),
+                                 path, state, SCHEME)).encode())
+        h.update(b"all" if frames is None else frames)
+        return h.hexdigest()
 
     def _hold_cache_open(self):
         """Name this identity's source file, mark its last use and hold its
@@ -968,7 +968,10 @@ class IndexedStore:
         or damaged."""
         return _read_batch(self._cache_path(a, b))
 
-    def _save(self, a, b, part):
+    def _save(self, a, b, part, omit=()):
+        """Write window ``[a, b)`` to the cache. ``omit`` names columns the
+        other batches of this dataset left out (ADR 0106 levels), so a batch
+        written later keeps the same level."""
         if not self.use_cache or not budget().parsed_limit:
             return
         try:
@@ -1014,7 +1017,7 @@ class IndexedStore:
                     if self._kept_level is not None:
                         keep = min(keep, self._kept_level)
                     self._kept_level = keep
-                selected = {k: v for k, v in part.items() if levels[k] <= keep}
+                selected = {k: v for k, v in part.items() if levels[k] <= keep and k not in omit}
                 if len(selected) < len(part):
                     selected["__omitted__"] = np.asarray(sorted(set(part) - set(selected)))
                     part = selected
@@ -1146,11 +1149,32 @@ class IndexedStore:
         if part is None:
             part = self._parse(a, b)
             self.check_source()
-            if self._warming and (a, b) in self.ranges:
-                self._save(a, b, part)
+            if (a, b) in self.ranges and (self._warming or self._batch_is_gone(a, b)):
+                # A batch deleted by `cache verify`, or lost some other way, is
+                # written again the next time its frames are parsed, at the
+                # level its siblings were kept (ADR 0111).
+                self._save(a, b, part, omit=() if self._warming else self._siblings_omitted(a, b))
         size = sum(v.nbytes for v in part.values())
         budget().keep(key, part, size)
         return part
+
+    def _batch_is_gone(self, a, b):
+        return self.use_cache and not self._cache_path(a, b).exists()
+
+    def _siblings_omitted(self, a, b):
+        """The columns the first readable other batch of this dataset omits."""
+        for x, y in self.ranges:
+            if (x, y) == (a, b):
+                continue
+            try:
+                with zipfile.ZipFile(self._cache_path(x, y)) as archive:
+                    if "__omitted__.npy" not in archive.namelist():
+                        return set()
+                    with archive.open("__omitted__.npy") as member:
+                        return {str(k) for k in np.lib.format.read_array(member, allow_pickle=False)}
+            except (OSError, ValueError, zipfile.BadZipFile):
+                continue
+        return set()
 
     def _read_ranges(self, a, b):
         """Split source reads by parser workspace, even with an old manifest.
