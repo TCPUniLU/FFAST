@@ -63,6 +63,15 @@ def build_parser():
     bun.add_argument("--timeout", type=float, default=1800)
     bun.add_argument("--memory-bytes", type=parse_bytes, default=3 * 2**30)
 
+    ver = sub.add_parser("verify", help="time the strict check against reading the disk (ADR 0111)")
+    ver.add_argument("--sizes", type=_csv, default=["1GB"])
+    ver.add_argument("--classes", type=_csv, default=["medium"])
+    ver.add_argument("--counts", type=_csv, default=["constant"])
+    ver.add_argument("--repeats", type=int, default=3)
+    ver.add_argument("--data-dir", type=Path, required=True)
+    ver.add_argument("--output", type=Path, required=True)
+    ver.add_argument("--memory-bytes", type=parse_bytes, default=3 * 2**30)
+
     cmp_ = sub.add_parser("compare", help="compare two sides of a run set")
     cmp_.add_argument("output", type=Path)
     cmp_.add_argument("--baseline", required=True)
@@ -89,6 +98,9 @@ def main(argv=None):
     elif args.command == "bundle":
         from benchmarks.ingest.bundle import run_bundle
         return run_bundle(args)
+    elif args.command == "verify":
+        from benchmarks.ingest.verify import run_verify
+        return run_verify(args)
     elif args.command == "compare":
         from benchmarks.ingest.compare import compare
         return compare(args.output, args.baseline, args.candidate, args.extra)
