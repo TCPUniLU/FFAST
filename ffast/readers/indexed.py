@@ -141,6 +141,77 @@ def _member_rows(archive, f, key, start, stop):
     return out
 
 
+def _write_batch(path, part, prefix=""):
+    """Write one compacted batch (``part``: name -> array) to ``path``: a
+    temporary file in the same folder, flushed to disk, then renamed, so a
+    crash leaves a whole batch or none. Uncompressed, so members can be read
+    in place. Raises OSError; the temporary file is removed first."""
+    fd, temp = tempfile.mkstemp(dir=Path(path).parent, prefix=prefix, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            np.savez(f, **part)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+
+
+def _read_batch_slice(path, key, start, stop, info, *, touch=True):
+    """Rows ``[start, stop)`` of column ``key`` of the batch file ``path``,
+    read in place from its uncompressed numpy zip member: only the requested
+    bytes, copied into a new array (ADR 0106). None when the batch left the
+    column out on purpose (``__omitted__``) or cannot be read in place. A
+    column the batch never had is NaN. ``info`` is the column's facts (dtype,
+    tail). ``touch`` marks the file as just used; a read-only bundle passes
+    False. Raises OSError, ValueError, EOFError or BadZipFile for a damaged
+    file."""
+    with zipfile.ZipFile(path) as archive, open(path, "rb") as f:
+        try:
+            archive.getinfo(key + ".npy")
+        except KeyError:
+            if "__omitted__.npy" in archive.namelist():
+                with archive.open("__omitted__.npy") as member:
+                    if key in np.lib.format.read_array(member, allow_pickle=False):
+                        return None
+            return np.full((stop - start, *info["tail"]), np.nan, dtype=info["dtype"])
+        out = _member_rows(archive, f, key, start, stop)
+        if out is None:
+            return None
+        if "__restore__.npy" in archive.namelist():
+            with archive.open("__restore__.npy") as member:
+                table = np.lib.format.read_array(member, allow_pickle=False)
+            out = _restore({key: out}, table)[key]
+    if touch:
+        os.utime(path)
+    return out
+
+
+def _read_batch(path, *, touch=True):
+    """Every column of the batch file ``path``, read in place. None when the
+    batch omits a column; raises when the file is missing or damaged."""
+    with zipfile.ZipFile(path) as archive, open(path, "rb") as f:
+        names = archive.namelist()
+        if "__omitted__.npy" in names:
+            return None
+        part = {}
+        for name in names:
+            if name == "__restore__.npy":
+                continue
+            value = _member_rows(archive, f, name[:-4], 0, None)
+            if value is None:
+                raise ValueError("A cached column cannot be read in place")
+            part[name[:-4]] = value
+        if "__restore__.npy" in names:
+            with archive.open("__restore__.npy") as member:
+                table = np.lib.format.read_array(member, allow_pickle=False)
+            _restore(part, table)
+    if touch:
+        os.utime(path)
+    return part
+
+
 class NoManifest(Exception):
     """A store was asked to open from its manifest only, and there is none."""
 
@@ -813,31 +884,8 @@ class IndexedStore:
         """
         if not self.use_cache:
             return None
-        path = self._cache_path(a, b)
         try:
-            with zipfile.ZipFile(path) as archive, open(path, "rb") as f:
-                try:
-                    archive.getinfo(key + ".npy")
-                except KeyError:
-                    if "__omitted__.npy" in archive.namelist():
-                        with archive.open("__omitted__.npy") as member:
-                            if key in np.lib.format.read_array(member, allow_pickle=False):
-                                return None
-                    info = self.info[key]
-                    return np.full(
-                        (stop - start, *info["tail"]),
-                        np.nan,
-                        dtype=info["dtype"],
-                    )
-                out = _member_rows(archive, f, key, start, stop)
-                if out is None:
-                    return None
-                if "__restore__.npy" in archive.namelist():
-                    with archive.open("__restore__.npy") as member:
-                        table = np.lib.format.read_array(member, allow_pickle=False)
-                    out = _restore({key: out}, table)[key]
-            os.utime(path)
-            return out
+            return _read_batch_slice(self._cache_path(a, b), key, start, stop, self.info[key])
         except (OSError, ValueError, EOFError, zipfile.BadZipFile):
             return None
 
@@ -845,30 +893,11 @@ class IndexedStore:
         """Every column of one cached window, read in place from the file.
         None when the window omits a column; raises when the file is missing
         or damaged."""
-        path = self._cache_path(a, b)
-        with zipfile.ZipFile(path) as archive, open(path, "rb") as f:
-            names = archive.namelist()
-            if "__omitted__.npy" in names:
-                return None
-            part = {}
-            for name in names:
-                if name == "__restore__.npy":
-                    continue
-                value = _member_rows(archive, f, name[:-4], 0, None)
-                if value is None:
-                    raise ValueError("A cached column cannot be read in place")
-                part[name[:-4]] = value
-            if "__restore__.npy" in names:
-                with archive.open("__restore__.npy") as member:
-                    table = np.lib.format.read_array(member, allow_pickle=False)
-                _restore(part, table)
-        os.utime(path)
-        return part
+        return _read_batch(self._cache_path(a, b))
 
     def _save(self, a, b, part):
         if not self.use_cache or not budget().parsed_limit:
             return
-        temp = None
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
             size = sum(v.nbytes for v in part.values()) + 4096 * len(part)
@@ -934,19 +963,11 @@ class IndexedStore:
                 # Written, flushed to disk, then renamed: a crash leaves a
                 # whole batch or none. The temporary name carries the
                 # identity so a stopped scan removes only its own.
-                fd, temp = tempfile.mkstemp(dir=self.folder, prefix=f"{self.identity}-",
-                                            suffix=".tmp")
-                with os.fdopen(fd, "wb") as f:
-                    np.savez(f, **part)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(temp, self._cache_path(a, b))
+                _write_batch(self._cache_path(a, b), part, prefix=f"{self.identity}-")
         except OSError as exc:
             log.debug(
                 "Parsed batch cache unavailable for %s: %s", self.path, exc
             )
-            if temp:
-                Path(temp).unlink(missing_ok=True)
 
     def _part(self, a, b):
         from ffast.readers import text
