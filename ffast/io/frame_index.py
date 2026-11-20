@@ -176,8 +176,10 @@ def scan(path, *, progress=None, should_stop=None, on_batch=None, batch_bytes=No
     Python (an unusual count line, a broken frame) the loop below goes on from
     that frame, so a broken file gets the same message either way.
 
-    ``on_batch(starts, counts, end)`` observes complete native windows while
-    their text is still hot. It requires the compiled finder and raises
+    ``on_batch(starts, counts, end, digest=, window=)`` observes complete
+    native windows while their text is still hot. ``window`` is the byte range
+    ``[before, end)`` the call consumed and ``digest`` its source digest
+    (ADR 0111; ``cache/source_digest.py``), None when the finder gives none. It requires the compiled finder and raises
     NotFast on a Python handover, allowing its caller to restart on the usual
     validated path. ``batch_bytes`` overrides the window-size target.
 
@@ -201,17 +203,24 @@ def scan(path, *, progress=None, should_stop=None, on_batch=None, batch_bytes=No
         from ffast.readers.text import fast_threads
         from ffast.io.budget import budget
         parts_s, parts_c, n, threads = [], [], 0, fast_threads()
+        from ffast.cache import source_digest
+        same_scheme = getattr(fast, "SOURCE_SCHEME", None) == source_digest.SCHEME
         while True:
             owner = budget()
             span = min(batch_bytes or FIND_BYTES, max(1, (owner.limit - owner.used) // 4))
+            before = pos
             with owner.reserve(span * 3):
-                s, c, pos, state = fast.find_frames(str(path), pos, span, threads)
+                found = fast.find_frames(str(path), pos, span, threads)
+            s, c, pos, state = found[:4]
+            # A finder from before ADR 0111 returns four values; a different
+            # digest scheme is not one this FFAST can use.
+            digest = found[4] if len(found) > 4 and same_scheme else None
             parts_s.append(s)
             parts_c.append(c)
             n += len(s)
             if on_batch is not None:
                 if len(s):
-                    on_batch(s, c, pos)
+                    on_batch(s, c, pos, digest=digest, window=(before, pos))
                 if state == fast.FIND_PYTHON:
                     from ffast.io.extxyz_arrays import NotFast
                     raise NotFast("The frame index requires the Python scanner")

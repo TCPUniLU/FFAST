@@ -30,8 +30,9 @@ use numpy::{
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList};
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 
 create_exception!(
     _ffast_xyz,
@@ -1147,6 +1148,31 @@ fn newlines_in(block: &[u8], base: usize) -> Vec<usize> {
     out
 }
 
+/// The scheme of `source_digest`; `ffast/cache/source_digest.py` defines the same.
+const SOURCE_SCHEME: &str = "ffast-bytes-v1-sha256-8M";
+const SOURCE_PIECE: usize = 8 << 20;
+
+/// SHA-256 of the scheme tag followed by the SHA-256 of each 8 MiB piece of
+/// `data` in order (the last piece short); an empty range hashes the tag only.
+/// The pieces are hashed on `threads` threads.
+fn source_digest(data: &[u8], threads: usize) -> [u8; 32] {
+    let piece = |p: &[u8]| -> [u8; 32] { Sha256::digest(p).into() };
+    let pieces: Vec<[u8; 32]> = if threads > 1 && data.len() > SOURCE_PIECE {
+        match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
+            Ok(pool) => pool.install(|| data.par_chunks(SOURCE_PIECE).map(piece).collect()),
+            Err(_) => data.chunks(SOURCE_PIECE).map(piece).collect(),
+        }
+    } else {
+        data.chunks(SOURCE_PIECE).map(piece).collect()
+    };
+    let mut outer = Sha256::new();
+    outer.update(SOURCE_SCHEME.as_bytes());
+    for p in &pieces {
+        outer.update(p);
+    }
+    outer.finalize().into()
+}
+
 /// Every line end of a buffer, found in parallel before the walk.
 struct Lines {
     nl: Vec<usize>,
@@ -1256,9 +1282,10 @@ fn find_in(data: &[u8], nl: Vec<usize>, base: usize, at_eof: bool, limit: usize)
 
 /// The frames of `path` from byte `offset` (a frame's start), up to the first
 /// frame starting at or after `offset + limit`: `(starts, counts, next,
-/// state)`, `state` one of FIND_MORE, FIND_END, FIND_PYTHON. The same frames
-/// as `frame_index.scan`; anything unusual is left to it (FIND_PYTHON).
-/// `threads` look for the line ends.
+/// state, digest)`, `state` one of FIND_MORE, FIND_END, FIND_PYTHON. The same
+/// frames as `frame_index.scan`; anything unusual is left to it (FIND_PYTHON).
+/// `digest` is the 32-byte `SOURCE_SCHEME` digest of bytes `[offset, next)`.
+/// `threads` look for the line ends and hash the bytes.
 #[pyfunction]
 #[pyo3(signature = (path, offset, limit, threads=1))]
 fn find_frames<'py>(
@@ -1267,11 +1294,11 @@ fn find_frames<'py>(
     offset: u64,
     limit: u64,
     threads: usize,
-) -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8)> {
+) -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8, Bound<'py, PyBytes>)> {
     let file = std::fs::File::open(path)?;
     let size = file.metadata()?.len();
-    let (starts, counts, next, state) = if offset >= size {
-        (Vec::new(), Vec::new(), offset as usize, FIND_END)
+    let (starts, counts, next, state, digest) = if offset >= size {
+        (Vec::new(), Vec::new(), offset as usize, FIND_END, source_digest(&[], threads))
     } else {
         py.allow_threads(|| -> std::io::Result<_> {
             let mut want = limit.max(1);
@@ -1282,14 +1309,19 @@ fn find_frames<'py>(
                 tock("find.read + newlines", &mut clock);
                 let found = find_in(&data, nl, offset as usize, end == size, limit as usize);
                 tock("find.walk", &mut clock);
-                if let Some(found) = found {
-                    return Ok(found);
+                if let Some((starts, counts, next, state)) = found {
+                    // The digest covers the bytes this call consumed, hashed
+                    // once, from the read that succeeded (ADR 0111).
+                    let digest = source_digest(&data[..next - offset as usize], threads);
+                    tock("find.digest", &mut clock);
+                    return Ok((starts, counts, next, state, digest));
                 }
                 want = want.saturating_mul(2); // one frame longer than the bytes read
             }
         })?
     };
-    Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state))
+    Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state,
+        PyBytes::new_bound(py, &digest)))
 }
 
 // ── energies for sampling ─────────────────────────────────────────────────
@@ -1603,6 +1635,7 @@ fn _ffast_xyz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("FIND_MORE", FIND_MORE)?;
     m.add("FIND_END", FIND_END)?;
     m.add("FIND_PYTHON", FIND_PYTHON)?;
+    m.add("SOURCE_SCHEME", SOURCE_SCHEME)?;
     m.add("NotFast", m.py().get_type_bound::<NotFast>())?;
     Ok(())
 }

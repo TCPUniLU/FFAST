@@ -419,7 +419,7 @@ class IndexedStore:
                     if progress and callable(getattr(progress, "bytes_read", None)):
                         progress.bytes_read(min(int(end), self.state[2]), self.state[2], b)
 
-                def found(starts, counts, end):
+                def found(starts, counts, end, digest=None, window=None):
                     nonlocal pending
                     stop.check()
                     if pending is not None:
