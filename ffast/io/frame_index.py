@@ -179,7 +179,10 @@ def scan(path, *, progress=None, should_stop=None, on_batch=None, batch_bytes=No
     ``on_batch(starts, counts, end, digest=, window=)`` observes complete
     native windows while their text is still hot. ``window`` is the byte range
     ``[before, end)`` the call consumed and ``digest`` its source digest
-    (ADR 0111; ``cache/source_digest.py``), None when the finder gives none. It requires the compiled finder and raises
+    (ADR 0111; ``cache/source_digest.py``), None when the finder gives none.
+    The digest is computed on a thread of the finder while the window is
+    parsed: it arrives as a job (or bytes, from an older finder) and
+    ``source_digest.resolve`` waits for it. It requires the compiled finder and raises
     NotFast on a Python handover, allowing its caller to restart on the usual
     validated path. ``batch_bytes`` overrides the window-size target.
 

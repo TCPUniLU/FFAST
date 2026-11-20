@@ -81,3 +81,12 @@ def file_range_digests(path, ranges, threads=None) -> list[bytes]:
 
 def _hash_piece(buffer, n):
     return hashlib.sha256(memoryview(buffer)[:n]).digest()
+
+
+def resolve(digest):
+    """The 32 bytes of a digest as the frame finder hands it over: bytes (an
+    older finder), or a background job to wait for. None stays None."""
+    if digest is None:
+        return None
+    result = getattr(digest, "result", None)
+    return bytes(result() if callable(result) else digest)

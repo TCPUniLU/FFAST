@@ -368,6 +368,7 @@ class IndexedStore:
         One indexing window runs beside one parsing/hashing window. Both are
         bounded; this avoids a second physical pass over a file larger than RAM.
         """
+        from ffast.cache import source_digest
         from ffast.io import frame_index
         from ffast.readers import text
         from ffast.metrics import stop
@@ -402,12 +403,8 @@ class IndexedStore:
                     ThreadPoolExecutor(max_workers=1) as parsing:
                 self._hash_pool = hashes
 
-                def consume(starts, counts, end, source=None):
+                def consume(starts, counts, end, window=None, digest=None):
                     stop.check()
-                    if source is None:
-                        self._source_ok = False
-                    else:
-                        self._source.append(source)
                     self.check_source()
                     a, b = len(self.counts), len(self.counts) + len(counts)
                     self.starts = np.concatenate((self.starts, starts))
@@ -421,6 +418,16 @@ class IndexedStore:
                     self._observe(part, a, b)
                     self._remember_small(part, a, b)
                     self._observe_elements(part, a, b)
+                    # The finder hashes the window's bytes on a thread of its
+                    # own while it is parsed here; collect the digest before
+                    # the window is committed (ADR 0111).
+                    source = None
+                    if digest is not None and window is not None:
+                        source = (int(window[0]), int(window[1]), source_digest.resolve(digest))
+                    if source is None:
+                        self._source_ok = False
+                    else:
+                        self._source.append(source)
                     if self._record is not None:
                         if self._cache_path(a, b).exists():
                             self._record.commit(self, a, b, end, source)
@@ -435,8 +442,7 @@ class IndexedStore:
                     if pending is not None:
                         pending.result()
                     context = contextvars.copy_context()
-                    source = None if digest is None or window is None else (int(window[0]), int(window[1]), bytes(digest))
-                    pending = parsing.submit(context.run, consume, starts, counts, end, source)
+                    pending = parsing.submit(context.run, consume, starts, counts, end, window, digest)
 
                 if resume_at and progress and callable(getattr(progress, "bytes_read", None)):
                     # Report from where the scan goes on, not from zero.

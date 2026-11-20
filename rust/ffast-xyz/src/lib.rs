@@ -1173,6 +1173,44 @@ fn source_digest(data: &[u8], threads: usize) -> [u8; 32] {
     outer.finalize().into()
 }
 
+/// The digest of one `find_frames` window, computed on a thread of its own
+/// while Python parses the window. `result()` waits for it (GIL released).
+#[pyclass]
+struct DigestJob {
+    state: std::sync::Mutex<JobState>,
+}
+
+enum JobState {
+    Running(std::thread::JoinHandle<[u8; 32]>),
+    Done([u8; 32]),
+    Taken,
+}
+
+#[pymethods]
+impl DigestJob {
+    /// The 32-byte digest; blocks until the background hash is done.
+    fn result<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let mut state = self.state.lock().map_err(|_| PyValueError::new_err("digest job poisoned"))?;
+        if let JobState::Running(_) = &*state {
+            let JobState::Running(handle) = std::mem::replace(&mut *state, JobState::Taken) else { unreachable!() };
+            let digest = py.allow_threads(|| handle.join())
+                .map_err(|_| PyValueError::new_err("the source digest thread failed"))?;
+            *state = JobState::Done(digest);
+        }
+        match &*state {
+            JobState::Done(d) => Ok(PyBytes::new_bound(py, d)),
+            _ => Err(PyValueError::new_err("digest job has no result")),
+        }
+    }
+}
+
+/// Hash `data[..len]` on a background thread (ADR 0111). The thread owns the
+/// buffer the window was read into, so the bytes are read from disk once.
+fn digest_in_background(data: Vec<u8>, len: usize, threads: usize) -> DigestJob {
+    let handle = std::thread::spawn(move || source_digest(&data[..len], threads));
+    DigestJob { state: std::sync::Mutex::new(JobState::Running(handle)) }
+}
+
 /// Every line end of a buffer, found in parallel before the walk.
 struct Lines {
     nl: Vec<usize>,
@@ -1284,7 +1322,8 @@ fn find_in(data: &[u8], nl: Vec<usize>, base: usize, at_eof: bool, limit: usize)
 /// frame starting at or after `offset + limit`: `(starts, counts, next,
 /// state, digest)`, `state` one of FIND_MORE, FIND_END, FIND_PYTHON. The same
 /// frames as `frame_index.scan`; anything unusual is left to it (FIND_PYTHON).
-/// `digest` is the 32-byte `SOURCE_SCHEME` digest of bytes `[offset, next)`.
+/// `digest` is a job whose `result()` is the 32-byte `SOURCE_SCHEME` digest of
+/// bytes `[offset, next)`, computed in the background.
 /// `threads` look for the line ends and hash the bytes.
 #[pyfunction]
 #[pyo3(signature = (path, offset, limit, threads=1))]
@@ -1294,11 +1333,12 @@ fn find_frames<'py>(
     offset: u64,
     limit: u64,
     threads: usize,
-) -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8, Bound<'py, PyBytes>)> {
+) -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8, Bound<'py, DigestJob>)> {
     let file = std::fs::File::open(path)?;
     let size = file.metadata()?.len();
-    let (starts, counts, next, state, digest) = if offset >= size {
-        (Vec::new(), Vec::new(), offset as usize, FIND_END, source_digest(&[], threads))
+    let (starts, counts, next, state, job) = if offset >= size {
+        (Vec::new(), Vec::new(), offset as usize, FIND_END,
+         DigestJob { state: std::sync::Mutex::new(JobState::Done(source_digest(&[], threads))) })
     } else {
         py.allow_threads(|| -> std::io::Result<_> {
             let mut want = limit.max(1);
@@ -1311,17 +1351,17 @@ fn find_frames<'py>(
                 tock("find.walk", &mut clock);
                 if let Some((starts, counts, next, state)) = found {
                     // The digest covers the bytes this call consumed, hashed
-                    // once, from the read that succeeded (ADR 0111).
-                    let digest = source_digest(&data[..next - offset as usize], threads);
-                    tock("find.digest", &mut clock);
-                    return Ok((starts, counts, next, state, digest));
+                    // once, from the read that succeeded, on a thread of its
+                    // own so the window goes to the parser at once (ADR 0111).
+                    let job = digest_in_background(data, next - offset as usize, (threads / 2).max(1));
+                    return Ok((starts, counts, next, state, job));
                 }
                 want = want.saturating_mul(2); // one frame longer than the bytes read
             }
         })?
     };
     Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state,
-        PyBytes::new_bound(py, &digest)))
+        Bound::new(py, job)?))
 }
 
 // ── energies for sampling ─────────────────────────────────────────────────
@@ -1636,6 +1676,7 @@ fn _ffast_xyz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("FIND_END", FIND_END)?;
     m.add("FIND_PYTHON", FIND_PYTHON)?;
     m.add("SOURCE_SCHEME", SOURCE_SCHEME)?;
+    m.add_class::<DigestJob>()?;
     m.add("NotFast", m.py().get_type_bound::<NotFast>())?;
     Ok(())
 }

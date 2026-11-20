@@ -68,7 +68,7 @@ def test_the_scan_gives_each_window_the_digest_of_its_bytes(tmp_path):
     data = path.read_bytes()
     seen = []
     frame_index.scan(str(path), on_batch=lambda s, c, end, digest=None, window=None:
-                     seen.append((window, digest)), batch_bytes=200_000)
+                     seen.append((window, sd.resolve(digest))), batch_bytes=200_000)
     assert len(seen) > 5
     assert seen[0][0][0] == 0 and seen[-1][0][1] == len(data)
     for (a, b), digest in seen:
@@ -86,7 +86,7 @@ def test_a_digest_spans_many_pieces_the_same_in_rust_and_python(tmp_path):
     assert len(data) > 2 * sd.PIECE
     s, c, end, state, digest = ffast_xyz.find_frames(str(path), 0, len(data), 4)
     assert state == ffast_xyz.FIND_END and end == len(data)
-    assert digest == sd.range_digest(data[:end])
+    assert sd.resolve(digest) == sd.range_digest(data[:end])
 
 
 @needs_fast
