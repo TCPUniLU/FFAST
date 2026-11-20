@@ -146,6 +146,7 @@ things came up.
 - [0106](0106-the-ram-budget-stops-shaping-the-parsed-cache.md) The RAM budget stops shaping the parsed cache: one one-pass path for full memory-saving XYZ loads, cache columns chosen by file size and disk, plain reads of cached batches through the OS file cache (memory maps measured 2.6x slower), automatic budget from total RAM (accepted, built)
 - [0107](0107-fingerprints-hash-fixed-chunks-and-scans-resume.md) Fingerprints hash fixed chunks of 16,384 rows with SHA-256, a full scan names its cache when it starts, and an interrupted scan resumes from its last committed window (accepted, built)
 - [0108](0108-cache-copies-have-pins-and-one-eviction.md) Parsed cache copies are grouped by source file, protected by pins and open-copy locks, and evicted by one function in last-use order; `ffast-cli cache` lists, pins and deletes (accepted, built)
+- [0110](0110-a-parsed-dataset-exports-as-a-portable-bundle.md) `ffast-cli cache export` writes a parsed XYZ dataset as a portable folder (batches, digests, source probe) that opens on another machine without the source file, with the same fingerprint (accepted, built)
 
 ## Format
 
