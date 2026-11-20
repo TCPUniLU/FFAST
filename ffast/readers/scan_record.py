@@ -8,6 +8,9 @@ Files, all in the batch folder and all named by the scan's identity:
 
 ``<id>.frames.bin``    appended little-endian int64 pairs ``(start, count)``,
                        one per frame
+``<id>.source.bin``    appended 48-byte records ``(start int64, end int64,
+                       sha-256 digest)``, one per window: the source bytes the
+                       window consumed (ADR 0111)
 ``<id>.chunks.bin``    appended text lines, one JSON list per completed chunk:
                        ``[column, dtype, chunk index, hex digest]``
 ``<id>.<n>.tail.npz``  for each column and dtype candidate, the rows of the one
@@ -38,7 +41,8 @@ from ffast.io import cache_space
 
 log = logging.getLogger("FFAST")
 
-SUFFIXES = (".frames.bin", ".chunks.bin", ".tail.npz", ".progress.json")
+SUFFIXES = (".frames.bin", ".chunks.bin", ".source.bin", ".tail.npz", ".progress.json")
+SOURCE_RECORD = 48
 
 
 def is_state_file(name):
@@ -74,14 +78,18 @@ class ScanRecord:
         self.identity = identity
         self.frames_bin = self.folder / f"{identity}.frames.bin"
         self.chunks_bin = self.folder / f"{identity}.chunks.bin"
+        self.source_bin = self.folder / f"{identity}.source.bin"
         self.progress = self.folder / f"{identity}.progress.json"
         self.alive = True
+        # False once a window has no source digest: the scan then records none.
+        self.source_ok = True
+        self._source_length = 0
         self._written = {}          # (column, dtype) -> chunk digests already on disk
         self._frames_length = 0
         self._chunks_length = 0
 
     def paths(self):
-        return (self.progress, self.frames_bin, self.chunks_bin,
+        return (self.progress, self.frames_bin, self.chunks_bin, self.source_bin,
                 *self.folder.glob(self.identity + ".*.tail.npz"))
 
     def clear(self):
@@ -91,7 +99,8 @@ class ScanRecord:
         for path in self.folder.glob(self.identity + ".*.tmp"):
             path.unlink(missing_ok=True)
         self._written.clear()
-        self._frames_length = self._chunks_length = 0
+        self._frames_length = self._chunks_length = self._source_length = 0
+        self.source_ok = True
 
     def load(self):
         """The record as a dict; None when there is none or it cannot be read."""
@@ -109,6 +118,9 @@ class ScanRecord:
         ``written`` is how many digests of each (column, dtype) are on disk."""
         self._frames_length = int(record["frames_length"])
         self._chunks_length = int(record["chunks_length"])
+        # A record from before ADR 0111 has no source digests for its windows.
+        self.source_ok = bool(record.get("source_ok", False))
+        self._source_length = int(record.get("source_length", 0))
         self._written = dict(written)
 
     def discard(self):
@@ -151,17 +163,25 @@ class ScanRecord:
         except OSError:
             pass
 
-    def commit(self, store, a, b, end):
+    def commit(self, store, a, b, end, source=None):
         """Record that frames ``[0, b)`` and the bytes before ``end`` are done.
-        Call after the batch of window ``[a, b)`` is in place."""
+        Call after the batch of window ``[a, b)`` is in place. ``source`` is
+        the window's ``(start byte, end byte, digest)``; None (no digest)
+        stops source recording for the rest of the scan."""
         if not self.alive:
             return
         try:
-            self._commit(store, a, b, end)
+            self._commit(store, a, b, end, source)
         except OSError as exc:
             self.abandon(f"{type(exc).__name__}: {exc}")
 
-    def _commit(self, store, a, b, end):
+    def _commit(self, store, a, b, end, source):
+        if source is None:
+            self.source_ok = False
+        elif self.source_ok:
+            start, stop_, digest = source
+            self._source_length = _append(
+                self.source_bin, np.array([start, stop_], dtype="<i8").tobytes() + bytes(digest))
         pairs = np.column_stack((store.starts[a:b], store.counts[a:b])).astype("<i8")
         self._frames_length = _append(self.frames_bin, pairs.tobytes())
         lines = []
@@ -209,6 +229,8 @@ class ScanRecord:
             "atom_end": int(store.offsets[b]),
             "frames_length": self._frames_length,
             "chunks_length": self._chunks_length,
+            "source_ok": self.source_ok,
+            "source_length": self._source_length,
             "ranges": [list(map(int, r)) for r in store.ranges],
             "columns": columns,
             "elements": sorted(int(z) for z in store.element_set),
