@@ -560,3 +560,211 @@ def test_two_predictions_in_one_source_each_get_their_own_value(workspace):
         np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values), rtol=1e-12)
     finally:
         executor.shutdown()
+
+
+COLOURS = [
+    "ffast.force_difference[atom+structure;component;mae]",
+    "ffast.force_difference[atom+structure;component;rmse]",
+    "ffast.force_difference[atom+structure;length]",
+]
+
+
+def _counted(values, reads):
+    def read(a, b):
+        reads[0] += b - a
+        return values[a:b]
+    return BatchedArray(values.shape, values.dtype, read)
+
+
+@pytest.mark.parametrize("colour", COLOURS)
+def test_colour_range_after_the_plots_reads_no_forces(workspace, colour):
+    """Plots first: the shared pass already saw every atom's error, so the 3D
+    colour range comes from it without reading the forces again."""
+    default_registry.ensure(colour)
+    true, pred, offsets = inputs()
+    fresh = ServerExecutor(default_registry)
+    executor = ServerExecutor(default_registry)
+    try:
+        want = fresh.run_colouring(colour, Source(_wrapped(true), _wrapped(pred), offsets), {})
+        assert not isinstance(want, MetricFailure), want
+        reads = [0]
+        source = Source(_counted(true, reads), _counted(pred, reads), offsets)
+        assert not isinstance(executor.run(METRICS[2], source, {}), MetricFailure)
+        reads[0] = 0
+        got = executor.run_colouring(colour, source, {})
+        assert not isinstance(got, MetricFailure), got
+        assert reads == [0]
+        assert got._colour_span == want._colour_span
+        # Values of one frame are still read on demand, and right.
+        frame = slice(int(offsets[7]), int(offsets[8]))
+        np.testing.assert_array_equal(np.asarray(got.values)[frame],
+                                      np.asarray(want.values)[frame])
+    finally:
+        fresh.shutdown()
+        executor.shutdown()
+
+
+def test_colour_range_without_the_plots_still_reads_the_forces(workspace):
+    colour = COLOURS[0]
+    default_registry.ensure(colour)
+    true, pred, offsets = inputs()
+    executor = ServerExecutor(default_registry)
+    try:
+        reads = [0]
+        got = executor.run_colouring(
+            colour, Source(_counted(true, reads), _counted(pred, reads), offsets), {})
+        assert not isinstance(got, MetricFailure), got
+        assert reads[0] >= 2 * len(true)
+        np.testing.assert_allclose(got._colour_span,
+                                   (np.abs(pred - true).mean(axis=1).min(),
+                                    np.abs(pred - true).mean(axis=1).max()))
+    finally:
+        executor.shutdown()
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+def test_colour_with_bad_forces_behaves_as_without_the_plots(workspace, bad):
+    """A non-finite error is the colour pass's own question: no shortcut."""
+    colour = COLOURS[0]
+    default_registry.ensure(colour)
+    true, pred, offsets = inputs()
+    pred[2, 1] = bad
+    fresh = ServerExecutor(default_registry)
+    executor = ServerExecutor(default_registry)
+    try:
+        want = fresh.run_colouring(colour, Source(_wrapped(true), _wrapped(pred), offsets), {})
+        source = Source(_wrapped(true), _wrapped(pred), offsets)
+        executor.run(METRICS[2], source, {})
+        got = executor.run_colouring(colour, source, {})
+        assert isinstance(got, MetricFailure) == isinstance(want, MetricFailure), (got, want)
+        if not isinstance(got, MetricFailure):
+            assert got._colour_span == want._colour_span
+    finally:
+        fresh.shutdown()
+        executor.shutdown()
+
+
+def test_colour_range_is_not_taken_from_another_prediction(workspace):
+    colour = COLOURS[0]
+    default_registry.ensure(colour)
+    true, pred, offsets = inputs()
+    other = pred + 3.0
+    executor = ServerExecutor(default_registry)
+    try:
+        executor.run(METRICS[2], Source(_wrapped(true), _wrapped(pred), offsets), {})
+        got = executor.run_colouring(
+            colour, Source(_wrapped(true), _wrapped(other), offsets, token="other"), {})
+        errors = np.abs(other - true).mean(axis=1)
+        np.testing.assert_allclose(got._colour_span, (errors.min(), errors.max()))
+    finally:
+        executor.shutdown()
+
+
+MAE_PLOTS = [
+    "ffast.force_difference[dataset;component;mae]",
+    "ffast.force_difference[structure;component;mae]",
+    "ffast.force_mae_per_structure_density",
+    "ffast.force_mae_per_structure_smoothed",
+]
+
+
+@pytest.mark.parametrize("frames", [250, 3000])
+def test_colouring_first_gives_the_mae_plots_without_a_read(workspace, frames, monkeypatch):
+    """Colouring by per-atom MAE sums each structure's MAE on the way; the MAE
+    table cell, distribution and timeline then read no forces."""
+    # Small blocks, so blocks cut structures and are added in parts.
+    monkeypatch.setattr(type(workspace), "block_bytes", property(lambda self: 512))
+    colour = COLOURS[0]
+    default_registry.ensure(colour)
+    true, pred, offsets = inputs(frames)
+    baseline = InProcessExecutor(default_registry)
+    executor = ServerExecutor(default_registry)
+    try:
+        reads = [0]
+        source = Source(_counted(true, reads), _counted(pred, reads), offsets)
+        coloured = executor.run_colouring(colour, source, {})
+        assert not isinstance(coloured, MetricFailure), coloured
+        reads[0] = 0
+        for name in MAE_PLOTS:
+            got = executor.run(name, source, {})
+            want = baseline.run(name, Source(true, pred, offsets), {})
+            assert not isinstance(got, MetricFailure), (name, got)
+            np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values),
+                                       rtol=1e-12, atol=1e-12, equal_nan=True)
+        assert reads == [0]
+        # RMSE was not collected: it still makes its own pass, and is right.
+        got = executor.run(METRICS[3], source, {})
+        assert reads[0] >= 2 * len(true)
+        want = baseline.run(METRICS[3], Source(true, pred, offsets), {})
+        np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values),
+                                   rtol=1e-12, atol=1e-12, equal_nan=True)
+    finally:
+        executor.shutdown()
+
+
+@pytest.mark.parametrize("colour", COLOURS[1:])
+def test_other_colourings_collect_nothing(workspace, colour):
+    default_registry.ensure(colour)
+    true, pred, offsets = inputs()
+    executor = ServerExecutor(default_registry)
+    try:
+        reads = [0]
+        source = Source(_counted(true, reads), _counted(pred, reads), offsets)
+        executor.run_colouring(colour, source, {})
+        reads[0] = 0
+        executor.run(METRICS[2], source, {})
+        assert reads[0] >= 2 * len(true)
+    finally:
+        executor.shutdown()
+
+
+def test_colour_collected_mae_is_forgotten_with_its_objects(workspace):
+    colour = COLOURS[0]
+    default_registry.ensure(colour)
+    true, pred, offsets = inputs()
+    executor = ServerExecutor(default_registry)
+    try:
+        executor.run_colouring(colour, Source(_wrapped(true), _wrapped(pred), offsets), {})
+        executor.forget_objects({"data"})
+        pred += 2
+        got = executor.run(METRICS[0], Source(_wrapped(true), _wrapped(pred), offsets), {})
+        np.testing.assert_allclose(got.values, np.abs(pred - true).mean(), rtol=1e-12)
+    finally:
+        executor.shutdown()
+
+
+def test_colour_collected_mae_is_not_given_to_another_prediction(workspace):
+    colour = COLOURS[0]
+    default_registry.ensure(colour)
+    true, pred, offsets = inputs()
+    other = pred + 3.0
+    executor = ServerExecutor(default_registry)
+    try:
+        executor.run_colouring(colour, Source(_wrapped(true), _wrapped(pred), offsets), {})
+        got = executor.run(METRICS[0], Source(_wrapped(true), _wrapped(other), offsets,
+                                              token="other"), {})
+        np.testing.assert_allclose(got.values, np.abs(other - true).mean(), rtol=1e-12)
+    finally:
+        executor.shutdown()
+
+
+def test_stopped_colouring_publishes_nothing(workspace, monkeypatch):
+    monkeypatch.setattr(type(workspace), "block_bytes", property(lambda self: 512))
+    colour = COLOURS[0]
+    default_registry.ensure(colour)
+    true, pred, offsets = inputs()
+    asked = [False]
+
+    def read(a, b):
+        asked[0] = True   # stop once the first block was read
+        return true[a:b]
+
+    executor = ServerExecutor(default_registry)
+    try:
+        got = executor.run_colouring(
+            colour, Source(BatchedArray(true.shape, true.dtype, read), _wrapped(pred),
+                           offsets, stopped=lambda: asked[0]), {})
+        assert isinstance(got, MetricFailure)
+        assert not any(g.from_colour for g in executor._force_scans.groups.values())
+    finally:
+        executor.shutdown()

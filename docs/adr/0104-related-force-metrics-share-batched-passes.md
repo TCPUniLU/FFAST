@@ -129,3 +129,42 @@ Errors outputs succeeded. The first calculation measured 37.52 seconds versus
 The strict sixty-second load/metric check passed both runs. See the
 [profiling report](../reports/2026-11-15-so3lr-laptop-profile.md) for conditions,
 resource measurements and artifacts.
+
+## Amendment 2026-11-20: the summary pass keeps per-atom colour ranges
+
+3D colouring by a per-atom force error (`force_difference[atom+structure;component;mae]`,
+`[...;component;rmse]` and `[atom+structure;length]`, exact built-in formulas
+only) needs only the lowest and highest value over every atom. The summary
+pass already computes each atom's error, so it now keeps those three ranges
+(six numbers). `run_colouring` asks `ForceScans.colour_range` first; when a
+summary for the same forces is stored, the colour range costs no read.
+An atom whose error is not finite leaves the ranges out, so the colour pass
+then runs as before and keeps its own rules for such values.
+
+Colouring first does not run the summary pass: with a memory budget of 512 MB
+or less the summary pass gets one core and took 9.1-9.7 s on a 10 GB file
+(370,344 frames, 94.8M atoms), against 2.7-3.1 s for the colour pass alone.
+With a 14 GB budget it used about 4 cores and took 2.5 s.
+
+Instead, colouring by per-atom MAE (only that one) sums each structure's MAE
+and the dataset MAE from the values it reads anyway (`FrameMAE`). When it
+finishes, they are kept beside the group's summary (`from_colour`), and the
+shared pass answers `[structure;component;mae]` and `[dataset;component;mae]`
+from them until a summary exists. The MAE table cell, distribution and
+timeline then need no read; RMSE, outliers and the parity density still run
+the pass. Nothing is kept when the colouring stops or fails, when a structure
+with atoms has no finite value, or when the per-structure values would be
+larger than the summary pass keeps in memory (it writes those to result
+files). Sums run in a different order than the summary pass, so values may
+differ in the last bits (tests compare to 1e-12).
+
+On the 10 GB file, colouring first then took 2.7-3.4 s (before 2.7-3.1 s);
+the four MAE outputs after it 0.09-0.13 s; the remaining Basic Errors force
+pass 2.7 s with 4 cores (14 GB) and 8.9-9.6 s (512 MB), as without colouring.
+
+Measured on that file (laptop, parsed cache warm): colouring after Basic
+Errors went from 2.7-2.9 s to 2 ms with the same range; the summary pass took
+2.6-2.9 s (14 GB budget) and 9.2-9.7 s (512 MB), within run-to-run spread of
+before. A summary is kept for at most two idle force pairs and may be evicted;
+then the colour pass reads the forces again. Forces given as plain in-memory
+arrays (not batched) never make a summary, so they gain nothing.

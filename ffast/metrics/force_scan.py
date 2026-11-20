@@ -37,6 +37,27 @@ _EXPRESSIONS = {
     _BASE + "[structure;component;mae]": ("frame_mae", "mean(mean_parts(abs(D)), by=structure)"),
     _BASE + "[structure;component;rmse]": ("frame_rmse", "sqrt(mean(mean_parts(D ** 2), by=structure))"),
 }
+# 3D colouring by an error of each atom needs only its lowest and highest
+# value over every atom. The summary pass has each atom's error in hand, so it
+# keeps those ranges; a colouring after the plots then reads no forces.
+_COLOUR_EXPRESSIONS = {
+    _BASE + "[atom+structure;component;mae]": ("mae", "mean_parts(abs(D))"),
+    _BASE + "[atom+structure;component;rmse]": ("rmse", "sqrt(mean_parts(D ** 2))"),
+    _BASE + "[atom+structure;length]": ("length", "norm(D)"),
+}
+
+
+def colour_role(metric_id, fn):
+    """Which per-atom range of the summary answers colouring by ``metric_id``,
+    or None. Only the exact built-in formula qualifies."""
+    if metric_id not in _COLOUR_EXPRESSIONS:
+        return None
+    from ffast.metrics.expr import _ExprFn
+    name, expression = _COLOUR_EXPRESSIONS[metric_id]
+    if (type(fn) is _ExprFn and fn.expr == expression and fn.var_refs == {"D": _BASE}
+            and not fn.gap_inputs and fn.var_parts == {"D": 1}):
+        return name
+    return None
 
 
 def role(metric_id, fn):
@@ -166,6 +187,7 @@ class _Partial:
     errors: np.ndarray
     true: np.ndarray
     predicted: np.ndarray
+    atom_ranges: np.ndarray   # (lowest, highest) of each atom's MAE, MSE, squared length
 
 
 def _summary_batch(batch, reference, predicted, offsets):
@@ -175,7 +197,10 @@ def _summary_batch(batch, reference, predicted, offsets):
         delta = _difference(p, t)
         absolute = np.abs(delta)
         atom_abs = absolute.mean(axis=1)
-        atom_sq = np.square(delta).mean(axis=1)
+        # The same arithmetic as mean_parts and norm: a sum over x, y, z,
+        # then a division by 3 for the mean.
+        atom_ss = np.square(delta).sum(axis=1)
+        atom_sq = atom_ss / 3
         local = offsets[a:b + 1] - start
         sizes = np.diff(local)
         frame_abs = segmentSums(atom_abs, local) / sizes
@@ -187,13 +212,17 @@ def _summary_batch(batch, reference, predicted, offsets):
     if finite_pair.any():
         lo = min(t[finite_pair].min(), p[finite_pair].min())
         hi = max(t[finite_pair].max(), p[finite_pair].max())
+    if len(atom_abs):
+        atom_ranges = np.array([[v.min(), v.max()] for v in (atom_abs, atom_sq, atom_ss)])
+    else:
+        atom_ranges = np.full((3, 2), [np.inf, -np.inf])
     flat = absolute.ravel()
     selected = np.flatnonzero(np.isfinite(flat))
     if len(selected) > K:
         selected = selected[np.argpartition(-flat[selected], K - 1)[:K]]
     return _Partial(a, b, end - start, atom_abs.sum(), atom_sq.sum(),
                     frame_abs, frame_rms, bad, lo, hi, selected + 3 * start,
-                    flat[selected], t.ravel()[selected], p.ravel()[selected])
+                    flat[selected], t.ravel()[selected], p.ravel()[selected], atom_ranges)
 
 
 @dataclass
@@ -208,6 +237,9 @@ class Summary:
     batches: int
     atoms: int
     workers: int
+    # {"mae" | "rmse" | "length": (lowest, highest)} over every atom, or None
+    # when an atom's error is not finite: the colour pass decides then.
+    atom_ranges: dict | None = None
 
 
 def scan(reference, predicted, offsets):
@@ -239,6 +271,7 @@ def scan(reference, predicted, offsets):
     indices = np.empty(0, dtype=np.int64)
     errors = true_values = pred_values = np.empty(0)
     bad_frames = [False, False]
+    atom_lo, atom_hi = np.full(3, np.inf), np.full(3, -np.inf)
     batches = 0
     try:
         # Multiple temporaries and top-k indices fit the producer's reserved
@@ -260,6 +293,9 @@ def scan(reference, predicted, offsets):
                     writers[1].append(part.frame_rms)
                 count += part.atoms
                 lo, hi = min(lo, part.lo), max(hi, part.hi)
+                # np.minimum keeps a NaN, so a non-finite atom is seen below.
+                atom_lo = np.minimum(atom_lo, part.atom_ranges[:, 0])
+                atom_hi = np.maximum(atom_hi, part.atom_ranges[:, 1])
                 indices = np.concatenate((indices, part.indices))
                 errors = np.concatenate((errors, part.errors))
                 true_values = np.concatenate((true_values, part.true))
@@ -291,8 +327,17 @@ def scan(reference, predicted, offsets):
             mae = np.asarray(absolute_sum / count if count else np.nan)
             rmse = np.asarray(np.sqrt(squared_sum / count) if count else np.nan)
         mae.flags.writeable = rmse.flags.writeable = False
+        atom_ranges = None
+        if count and np.isfinite(atom_lo).all() and np.isfinite(atom_hi).all():
+            # sqrt is monotone and correctly rounded: sqrt of the extremes is
+            # the extreme of the sqrt, as the colour pass computes it.
+            atom_ranges = {
+                "mae": (float(atom_lo[0]), float(atom_hi[0])),
+                "rmse": (float(np.sqrt(atom_lo[1])), float(np.sqrt(atom_hi[1]))),
+                "length": (float(np.sqrt(atom_lo[2])), float(np.sqrt(atom_hi[2]))),
+            }
         result = Summary(mae, rmse, frame_mae, frame_rmse, outliers, (lo, hi),
-                         tuple(bad_frames), batches, count, _width.get())
+                         tuple(bad_frames), batches, count, _width.get(), atom_ranges)
         log.info("force_batch_scan: summary, %d batches, %d atoms, %d lanes, one difference per batch",
                  batches, count, _width.get())
         return result
@@ -338,6 +383,9 @@ class _Group:
         self.condition = threading.Condition()
         self.members = {}
         self.states, self.results, self.errors = {}, {}, {}
+        # Values a 3D colouring by per-atom MAE collected before any summary
+        # pass: {"mae": dataset MAE, "frame_mae": each structure's MAE}.
+        self.from_colour = {}
         self.invalid = False
         self.disabled = False
 
@@ -402,6 +450,13 @@ class Lease:
         name = role(metric_id, fn)
         if name is None:
             return NOT_HANDLED
+        with self.group.condition:
+            early = (None if "summary" in self.group.results or self.group.invalid
+                     else self.group.from_colour.get(name))
+        if early is not None:
+            if self.stopped():
+                raise stop.Stopped(stop.STOPPED)
+            return early
         result = self.group.get("summary", self)
         if result is NOT_HANDLED:
             return NOT_HANDLED
@@ -422,6 +477,45 @@ class Lease:
         self.manager.release(self)
 
 
+class FrameMAE:
+    """Each structure's and the dataset's force MAE, summed from the per-atom
+    MAE blocks a colouring reads in row order. A block may cut a structure;
+    its two parts are added. Published only when the whole colouring
+    finished and every structure with atoms has a finite value."""
+
+    def __init__(self, scans, key, offsets, source, sums):
+        self.scans, self.key, self.offsets, self.source = scans, key, offsets, source
+        self.sums = sums
+        self.total = 0.0
+        self.next = 0
+
+    def add(self, start, end, values):
+        if start != self.next:
+            raise ValueError("FrameMAE: blocks must come in row order")
+        self.next = end
+        values = np.asarray(values, dtype=np.float64).reshape(-1)
+        first = int(np.searchsorted(self.offsets, start, side="right")) - 1
+        last = int(np.searchsorted(self.offsets, end, side="left"))
+        local = np.clip(self.offsets[first:last + 1], start, end) - start
+        self.sums[first:last] += segmentSums(values, local)
+        self.total += values.sum()
+
+    def finish(self):
+        offsets = self.offsets
+        count = int(offsets[-1])
+        if self.next != count:
+            return
+        sizes = np.diff(offsets)
+        with np.errstate(all="ignore"):
+            frame_mae = np.divide(self.sums, sizes, out=self.sums)
+            mae = np.asarray(self.total / count if count else np.nan)
+        if not np.isfinite(frame_mae[sizes > 0]).all() or (count and not np.isfinite(mae)):
+            return
+        frame_mae.flags.writeable = mae.flags.writeable = False
+        self.scans._publish(self.key, offsets, self.source,
+                            {"frame_mae": frame_mae, "mae": mae})
+
+
 class ForceScans:
     """At most two idle summaries; live consumers share cancellation/lifetime."""
 
@@ -432,12 +526,94 @@ class ForceScans:
         self.owner = None
 
     def acquire(self, plan, source, registry):
-        from ffast.metrics.execution import RawInput
-
         roles = {role(step.metric_id, registry.get(step.metric_id)[1]) for step in plan.steps}
         roles.discard(None)
+        if not roles:
+            return None
+        found = self._identify(plan, source, registry)
+        if found is None:
+            return None
+        key, offsets, reference, predicted = found
+        with self.lock:
+            group = self._group(key, offsets, source)
+            lease = Lease(self, key, group, reference, predicted, source.stopped, roles)
+            with group.condition:
+                group.members[id(lease)] = lease
+                group.uses.update(source.uses())
+            return lease
+
+    def _group(self, key, offsets, source):
+        """The live group for ``key``, made when missing. Holds ``self.lock``."""
+        owner = budget()
+        if self.owner is not owner:
+            owner.register_cache(self.evict)
+            self.owner = owner
+        group = self.groups.get(key)
+        if group is None or group.invalid or group.errors:
+            group = _Group(offsets, source.uses(), self.workspace)
+            self.groups[key] = group
+        self.groups.move_to_end(key)
+        return group
+
+    def colour_collector(self, plan, source, registry, metric_id):
+        """A ``FrameMAE`` that turns the per-atom MAE a colouring reads into
+        the structure and dataset MAE the plots ask for, or None when the
+        plots could not use them or already have them."""
+        if colour_role(metric_id, registry.get(metric_id)[1]) != "mae":
+            return None
+        found = self._identify(plan, source, registry)
+        if found is None:
+            return None
+        key, offsets = found[0], found[1]
+        with self.lock:
+            group = self.groups.get(key)
+            if group is not None and not group.invalid:
+                with group.condition:
+                    if "summary" in group.results or group.from_colour:
+                        return None
+        n = len(offsets) - 1
+        # As the summary pass: per-structure values beyond this size go to
+        # result files there, so they are not collected here.
+        if n * 8 > min(128 * 2**20, budget().limit // 8):
+            return None
+        try:
+            sums = budget().retain(np.zeros(n))
+        except NotEnoughMemory:
+            return None
+        return FrameMAE(self, key, offsets, source, sums)
+
+    def _publish(self, key, offsets, source, values):
+        with self.lock:
+            group = self._group(key, offsets, source)
+            with group.condition:
+                if "summary" not in group.results:
+                    group.from_colour.update(values)
+
+    def colour_range(self, plan, source, registry, metric_id):
+        """``(lowest, highest)`` of a per-atom force error from a summary
+        already made for the same forces, or None. Never reads or scans."""
+        if colour_role(metric_id, registry.get(metric_id)[1]) is None:
+            return None
+        found = self._identify(plan, source, registry)
+        if found is None:
+            return None
+        with self.lock:
+            group = self.groups.get(found[0])
+            if group is None:
+                return None
+            with group.condition:
+                summary = None if group.invalid else group.results.get("summary")
+        if summary is None or summary.atom_ranges is None:
+            return None
+        return summary.atom_ranges[colour_role(metric_id, registry.get(metric_id)[1])]
+
+    def _identify(self, plan, source, registry):
+        """``(key, offsets, reference, predicted)`` of the one force pair
+        ``plan`` reads, or None when the shared pass cannot answer it."""
+        from ffast.metrics.execution import RawInput
+
         f = sys.modules.get("ffast.metrics.builtin.force_metrics")
-        if (not roles or f is None or not registry.has(_BASE)
+        if (f is None or not registry.has(_BASE)
                 or registry.get(_BASE)[1] is not f.force_difference):
             return None
         pairs, first = set(), None
@@ -475,21 +651,7 @@ class ForceScans:
         if identity is None:
             identity = hashlib.sha256(offsets.tobytes()).hexdigest()
         key = (r.identity, p.identity, reference.shape, identity, registry.revision)
-        owner = budget()
-        if self.owner is not owner:
-            owner.register_cache(self.evict)
-            self.owner = owner
-        with self.lock:
-            group = self.groups.get(key)
-            if group is None or group.invalid or group.errors:
-                group = _Group(offsets, source.uses(), self.workspace)
-                self.groups[key] = group
-            self.groups.move_to_end(key)
-            lease = Lease(self, key, group, reference, predicted, source.stopped, roles)
-            with group.condition:
-                group.members[id(lease)] = lease
-                group.uses.update(source.uses())
-            return lease
+        return key, offsets, reference, predicted
 
     def release(self, lease):
         gone = []

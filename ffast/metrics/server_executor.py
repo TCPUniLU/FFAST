@@ -265,9 +265,32 @@ class ServerExecutor(MetricExecutor):
                 stop.reset(token)
         return result
 
+    def _colour_bounds(self, values, stopped, collect=None):
+        """Lowest and highest finite value, read a batch at a time;
+        (inf, -inf) when none is finite. ``collect`` (a ``FrameMAE``) sees
+        every block and is finished when all were read."""
+        from ffast.io.batched import blocks
+
+        lo, hi = np.inf, -np.inf
+        with self._batch_work(stopped):
+            if isinstance(values, BatchedArray):
+                chunks = blocks(values)
+            else:
+                chunk = np.asarray(values)
+                chunks = [(0, len(chunk), chunk)]
+            for start, end, chunk in chunks:
+                stop.check()
+                if collect is not None:
+                    collect.add(start, end, chunk)
+                finite = chunk[np.isfinite(chunk)]
+                if finite.size:
+                    lo, hi = min(lo, float(finite.min())), max(hi, float(finite.max()))
+        if collect is not None:
+            collect.finish()
+        return lo, hi
+
     def run_colouring(self, id, source, parameters, *, key_out=None):
         """Cache exact bounds and a recipe for frame reads, never a full array."""
-        from ffast.io.batched import blocks
         from ffast.io.budget import budget
         from ffast.metrics.colouring import defer_results
 
@@ -301,20 +324,18 @@ class ServerExecutor(MetricExecutor):
                 if isinstance(result, MetricFailure):
                     return result
                 if not result._colour_only:
-                    lo, hi = np.inf, -np.inf
-                    values = result.values
-                    with self._batch_work(source.stopped):
-                        if isinstance(values, BatchedArray):
-                            chunks = (v for _, _, v in blocks(values))
-                        else:
-                            chunks = [np.asarray(values)]
-                        for chunk in chunks:
-                            stop.check()
-                            finite = chunk[np.isfinite(chunk)]
-                            if finite.size:
-                                lo, hi = min(lo, float(finite.min())), max(
-                                    hi, float(finite.max())
-                                )
+                    # The plots' shared force pass may know the range already.
+                    known = self._force_scans.colour_range(
+                        plan, source, self._registry, id)
+                    if known is not None:
+                        lo, hi = known
+                    else:
+                        # Colouring first: keep each structure's MAE on the
+                        # way, so those plots need no pass of their own.
+                        lo, hi = self._colour_bounds(
+                            result.values, source.stopped,
+                            self._force_scans.colour_collector(
+                                plan, source, self._registry, id))
                     result._colour_span = (
                         (lo, hi)
                         if np.isfinite(lo) and np.isfinite(hi)
