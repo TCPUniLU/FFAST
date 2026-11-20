@@ -53,6 +53,16 @@ def build_parser():
                           "takes 80%% of the RAM free at start, which differs between runs and "
                           "changes batching, cache size and load time. 0 lets FFAST choose.")
 
+    bun = sub.add_parser("bundle", help="time a portable bundle against the parsed cache (ADR 0110)")
+    bun.add_argument("--sizes", type=_csv, default=["1GB"])
+    bun.add_argument("--classes", type=_csv, default=["medium"])
+    bun.add_argument("--counts", type=_csv, default=["constant"])
+    bun.add_argument("--repeats", type=int, default=5)
+    bun.add_argument("--data-dir", type=Path, required=True)
+    bun.add_argument("--output", type=Path, required=True)
+    bun.add_argument("--timeout", type=float, default=1800)
+    bun.add_argument("--memory-bytes", type=parse_bytes, default=3 * 2**30)
+
     cmp_ = sub.add_parser("compare", help="compare two sides of a run set")
     cmp_.add_argument("output", type=Path)
     cmp_.add_argument("--baseline", required=True)
@@ -76,6 +86,9 @@ def main(argv=None):
     elif args.command == "run":
         from benchmarks.ingest.run import run_matrix
         return run_matrix(args)
+    elif args.command == "bundle":
+        from benchmarks.ingest.bundle import run_bundle
+        return run_bundle(args)
     elif args.command == "compare":
         from benchmarks.ingest.compare import compare
         return compare(args.output, args.baseline, args.candidate, args.extra)
