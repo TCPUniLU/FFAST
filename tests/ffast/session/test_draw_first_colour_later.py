@@ -37,14 +37,17 @@ def _fake_build_scene(view_state, get_dataset, get_prediction, get_forces, execu
     """Colours by METRIC when the whole-dataset result is there, else 'frame'."""
     whole = get_metric(METRIC, {}, "ds1", "m1") if get_metric else None
     values = [9.0] if whole is not None else [1.0]
+    chosen = view_state.parameters.get("ffast.atom_color", {}).get("range") or "dataset"
     return RenderScene(
         view_id=view_state.view_id, version=view_state.version,
         atoms=AtomScene(positions=[[0.0, 0.0, 0.0]], sizes=[1.0], colors=[[1, 1, 1, 1]],
-                        color_by=AtomColorBy(values=values, label="Force error")))
+                        color_by=AtomColorBy(values=values, label="Force error", range=chosen)))
 
 
-def _colour_by(view, source="force error"):
+def _colour_by(view, source="force error", range=None):
     view.state.parameters["ffast.atom_color"] = {"source": source}
+    if range:
+        view.state.parameters["ffast.atom_color"]["range"] = range
 
 
 async def _colour_command(s):
@@ -157,6 +160,29 @@ def test_when_the_metric_fails_the_colour_bar_says_why():
     assert patch_later["atoms"]["color_by"]["values"] == [1.0]
     note = patch_later["atoms"]["color_by"]["note"]
     assert "could not" in note and "out of memory" in note
+
+
+def test_this_frame_or_visible_atoms_show_no_whole_dataset_note():
+    """The note is about the whole dataset's colours: with This frame or
+    Visible atoms chosen it would only confuse, so the bar shows none."""
+    for fail in (False, True):
+        for chosen in ("frame", "visible"):
+            env = _env(fail=fail)
+
+            async def scenario():
+                s = ServerSession(env, asyncio.Queue())
+                await s.dispatch("OPEN_VIEW", [], {"view_id": "v1"})
+                s.outbound.get_nowait()
+                _colour_by(s.views["v1"], range=chosen)
+                with patch("ffast.visualization.scene_builder.build_scene", _fake_build_scene):
+                    await _colour_command(s)
+                    first = _messages(s)
+                    await s.colours_settled()
+                return first, _messages(s)
+
+            first, later = _run(scenario())
+            for p in _patches(first) + _patches(later):
+                assert p["atoms"]["color_by"]["note"] == "", (fail, chosen)
 
 
 def test_a_cached_colour_metric_is_used_at_once_with_no_second_patch():

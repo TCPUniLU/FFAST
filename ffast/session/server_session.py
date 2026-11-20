@@ -500,7 +500,10 @@ class ServerSession:
         """Say ``scene``'s colours are the frame's own while ``wanted`` is computed."""
         color_by = scene.atoms.color_by if scene is not None and scene.atoms else None
         if wanted and color_by is not None:
-            color_by.note = "Computing colours over all structures…"
+            # Only Whole dataset waits for these colours; This frame and
+            # Visible atoms are final already, so their bar says nothing.
+            if color_by.range == "dataset":
+                color_by.note = "Computing colours over all structures…"
             color_by.dataset_range = True   # coming, not missing (ADR 0084)
 
     def _colour_later(self, view, wanted) -> None:
@@ -581,7 +584,7 @@ class ServerSession:
         if state.structure_index != frame or self.views.get(state.view_id) is not view:
             return      # the newer frame's own command draws it, with these colours
         color_by = scene.atoms.color_by if scene.atoms else None
-        if problems and color_by is not None:
+        if problems and color_by is not None and color_by.range == "dataset":
             color_by.note = (f"Colours over all structures could not be computed "
                              f"({problems[0]}); these are the frame's own.")
         patch = ScenePatch(view_id=state.view_id, from_version=view.version,
