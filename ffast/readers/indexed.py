@@ -969,6 +969,81 @@ class IndexedStore:
                 "Parsed batch cache unavailable for %s: %s", self.path, exc
             )
 
+    def _parse(self, a, b, path=None, reader=None):
+        """Frames ``[a, b)`` parsed from the text of ``path`` (the source by
+        default) with ``reader`` (the store's own by default)."""
+        from ffast.readers import text
+
+        path = self.path if path is None else path
+        reader = self.reader if reader is None else reader
+        atoms = int(self.counts[a:b].sum())
+        # Atom arrays + parser input + transient headers. A giant single
+        # frame is refused before its output arrays are allocated.
+        need = atoms * (
+            32
+            + 24 * len(self.contents.get("forces") or [])
+            + 8 * len(self.contents.get("atom_fields") or [])
+        )
+        need += int((self.ends[a:b] - self.starts[a:b]).sum()) * 8
+        with budget().reserve(need):
+            if (
+                callable(getattr(reader, "parse_into", None))
+                and text.fast_parser_usable()
+            ):
+                try:
+                    threads = (
+                        text.fast_threads()
+                        if self.workers is None
+                        else max(1, int(self.workers))
+                    )
+                    threads = min(
+                        threads,
+                        b - a,
+                        max(
+                            1,
+                            int((self.ends[a:b] - self.starts[a:b]).sum())
+                            // 2**20,
+                        ),
+                    )
+                    part = text._read_fast_arrays(
+                        reader,
+                        path,
+                        self.contents,
+                        self.frames[a:b],
+                        self.starts[a:b],
+                        self.ends[a:b],
+                        self.counts[a:b],
+                        None,
+                        threads,
+                        b - a,
+                        log_read=False,
+                    )
+                except NotFast as exc:
+                    if not getattr(self, "_warned_fallback", False):
+                        log.warning(
+                            "%s: read with the slower Python parser (%s)",
+                            os.path.basename(path),
+                            exc,
+                            extra={"popup": False},
+                        )
+                        self._warned_fallback = True
+                    part = reader.parse(
+                        text._read_spans(
+                            path, self.starts[a:b], self.ends[a:b]
+                        ),
+                        int(self.frames[a]),
+                    )
+            else:
+                if callable(getattr(reader, "parse_into", None)):
+                    text._warn_no_fast_parser()
+                part = reader.parse(
+                    text._read_spans(
+                        path, self.starts[a:b], self.ends[a:b]
+                    ),
+                    int(self.frames[a]),
+                )
+        return part
+
     def _part(self, a, b):
         from ffast.readers import text
         from ffast.metrics.stop import check
@@ -996,72 +1071,7 @@ class IndexedStore:
                 if self._cache_path(a, b).exists():
                     self._cache_path(a, b).unlink(missing_ok=True)
         if part is None:
-            atoms = int(self.counts[a:b].sum())
-            # Atom arrays + parser input + transient headers. A giant single
-            # frame is refused before its output arrays are allocated.
-            need = atoms * (
-                32
-                + 24 * len(self.contents.get("forces") or [])
-                + 8 * len(self.contents.get("atom_fields") or [])
-            )
-            need += int((self.ends[a:b] - self.starts[a:b]).sum()) * 8
-            with budget().reserve(need):
-                if (
-                    callable(getattr(self.reader, "parse_into", None))
-                    and text.fast_parser_usable()
-                ):
-                    try:
-                        threads = (
-                            text.fast_threads()
-                            if self.workers is None
-                            else max(1, int(self.workers))
-                        )
-                        threads = min(
-                            threads,
-                            b - a,
-                            max(
-                                1,
-                                int((self.ends[a:b] - self.starts[a:b]).sum())
-                                // 2**20,
-                            ),
-                        )
-                        part = text._read_fast_arrays(
-                            self.reader,
-                            self.path,
-                            self.contents,
-                            self.frames[a:b],
-                            self.starts[a:b],
-                            self.ends[a:b],
-                            self.counts[a:b],
-                            None,
-                            threads,
-                            b - a,
-                            log_read=False,
-                        )
-                    except NotFast as exc:
-                        if not getattr(self, "_warned_fallback", False):
-                            log.warning(
-                                "%s: read with the slower Python parser (%s)",
-                                os.path.basename(self.path),
-                                exc,
-                                extra={"popup": False},
-                            )
-                            self._warned_fallback = True
-                        part = self.reader.parse(
-                            text._read_spans(
-                                self.path, self.starts[a:b], self.ends[a:b]
-                            ),
-                            int(self.frames[a]),
-                        )
-                else:
-                    if callable(getattr(self.reader, "parse_into", None)):
-                        text._warn_no_fast_parser()
-                    part = self.reader.parse(
-                        text._read_spans(
-                            self.path, self.starts[a:b], self.ends[a:b]
-                        ),
-                        int(self.frames[a]),
-                    )
+            part = self._parse(a, b)
             self.check_source()
             if self._warming and (a, b) in self.ranges:
                 self._save(a, b, part)

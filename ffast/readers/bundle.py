@@ -146,8 +146,8 @@ def read_description(path):
     if not isinstance(schema, int) or isinstance(schema, bool):
         raise bad("it has no schema number")
     if schema > SCHEMA:
-        raise ReaderError(f"The bundle {name} was made by a newer FFAST (bundle format {schema}, "
-                          f"this FFAST reads up to {SCHEMA}); update FFAST.")
+        raise ReaderError(f"The bundle {name} was made by a newer FFAST; update FFAST. "
+                          f"(Its format is {schema}; this FFAST reads up to {SCHEMA}.)")
     if description.get("scheme") != SCHEME.decode():
         raise bad(f"it was fingerprinted with {description.get('scheme')!r}, not {SCHEME.decode()!r}")
     try:

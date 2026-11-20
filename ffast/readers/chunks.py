@@ -73,6 +73,13 @@ def read_arrays(reader_class, path, *, stride=0, select=None, progress=None,
     """
     reader_name = reader_class.name
     file_name = os.path.basename(path)
+    if callable(getattr(reader_class, "load_whole", None)):
+        # A reader whose file is a finished set of arrays that loads whole,
+        # with no stride or selection: a portable bundle (ADR 0110).
+        with reader_errors(reader_name, path):
+            arrays, contents, frames, n_file = reader_class.load_whole(
+                path, stride=stride, select=select, progress=progress, workers=workers)
+        return Loaded(arrays, contents, frames, n_file, reader_name)
     if is_level2(reader_class):
         from ffast.readers import text
         with reader_errors(reader_name, path):

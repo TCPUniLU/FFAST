@@ -17,6 +17,7 @@ import numpy as np
 from ffast.loaders.ase import available_field_keys
 
 _XYZ = (".xyz", ".extxyz")
+_BUNDLE = ".ffast.json"     # a portable bundle (ADR 0110): the bundle reader's
 
 
 _NO_CELL = {"cell": False}      # the cell is not written, as ASE's export never wrote it
@@ -44,7 +45,7 @@ class AseReader:
 
     @staticmethod
     def can_read(path):
-        return not str(path).lower().endswith(_XYZ)
+        return not str(path).lower().endswith(_XYZ + (_BUNDLE,))
 
     def __init__(self, path):
         self.path = path
