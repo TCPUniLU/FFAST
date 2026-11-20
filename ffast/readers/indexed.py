@@ -36,8 +36,6 @@ _disk_lock = threading.RLock()
 _parse_lock = threading.RLock()
 # The chunk digests of a finished scan, beside its manifest (ADR 0107).
 CHUNKS_SUFFIX = ".chunks.npz"
-SOURCE_RANGES = "source|ranges"       # ADR 0111: the sidecar arrays that are not columns
-SOURCE_DIGESTS = "source|digests"
 
 
 def _open_identities(folder, own):
@@ -245,7 +243,12 @@ class IndexedStore:
         scan_source=False,
         require_manifest=False,
         full=False,
+        verify=False,
     ):
+        """``verify`` reads the whole file as a scan does, to compare it with
+        a cache (ADR 0111): nothing is written (no batches, record, lock or
+        frame list), and the chunk digests of every column are left in
+        ``chunk_digests`` for the caller."""
         from ffast.io import frame_cache
         from ffast.loaders.ase import _sample_indices
 
@@ -259,13 +262,19 @@ class IndexedStore:
         self.counts = np.asarray(counts, dtype=np.int64)
         self.offsets = np.concatenate(([0], np.cumsum(self.counts)))
         self.workers = workers
-        self.use_cache = bool(use_cache and budget().parsed_limit)
+        self._verify = bool(verify)
+        self.chunk_digests = {}
+        self.use_cache = bool(use_cache and budget().parsed_limit and not verify)
         self.folder = frame_cache._folder() / "batches"
         # A full, unsampled load is named by the file alone ("all"), so a scan
         # can name its cache before it knows its frames (ADR 0107). Any other
         # selection is named by its frame list.
         full = full or scan_source
         self.identity = self.identity_of(reader, self.path, self.state, None if full else self.frames)
+        if verify:
+            # Its parsed windows must not be taken from, or given to, the RAM
+            # cache that belongs to the real copy of this file.
+            self.identity = "verify-" + os.urandom(8).hex()
         self._hold_cache_open()
         self.info = {}
         self.sample = {}
@@ -368,7 +377,6 @@ class IndexedStore:
         One indexing window runs beside one parsing/hashing window. Both are
         bounded; this avoids a second physical pass over a file larger than RAM.
         """
-        from ffast.cache import source_digest
         from ffast.io import frame_index
         from ffast.readers import text
         from ffast.metrics import stop
@@ -383,10 +391,6 @@ class IndexedStore:
         self._scanning = True
         self._scan_allowance = None
         self._kept_level = None
-        # The source byte ranges of the scan's windows, with their digests, in
-        # order (ADR 0111); not kept once a window lacks one.
-        self._source = []
-        self._source_ok = True
         pending = None
         resume_at = 0
         if self.use_cache and budget().parsed_limit:
@@ -403,7 +407,7 @@ class IndexedStore:
                     ThreadPoolExecutor(max_workers=1) as parsing:
                 self._hash_pool = hashes
 
-                def consume(starts, counts, end, window=None, digest=None):
+                def consume(starts, counts, end):
                     stop.check()
                     self.check_source()
                     a, b = len(self.counts), len(self.counts) + len(counts)
@@ -418,31 +422,21 @@ class IndexedStore:
                     self._observe(part, a, b)
                     self._remember_small(part, a, b)
                     self._observe_elements(part, a, b)
-                    # The finder hashes the window's bytes on a thread of its
-                    # own while it is parsed here; collect the digest before
-                    # the window is committed (ADR 0111).
-                    source = None
-                    if digest is not None and window is not None:
-                        source = (int(window[0]), int(window[1]), source_digest.resolve(digest))
-                    if source is None:
-                        self._source_ok = False
-                    else:
-                        self._source.append(source)
                     if self._record is not None:
                         if self._cache_path(a, b).exists():
-                            self._record.commit(self, a, b, end, source)
+                            self._record.commit(self, a, b, end)
                         else:
                             self._record.abandon("a batch was not kept")
                     if progress and callable(getattr(progress, "bytes_read", None)):
                         progress.bytes_read(min(int(end), self.state[2]), self.state[2], b)
 
-                def found(starts, counts, end, digest=None, window=None):
+                def found(starts, counts, end):
                     nonlocal pending
                     stop.check()
                     if pending is not None:
                         pending.result()
                     context = contextvars.copy_context()
-                    pending = parsing.submit(context.run, consume, starts, counts, end, window, digest)
+                    pending = parsing.submit(context.run, consume, starts, counts, end)
 
                 if resume_at and progress and callable(getattr(progress, "bytes_read", None)):
                     # Report from where the scan goes on, not from zero.
@@ -460,7 +454,9 @@ class IndexedStore:
                     self.state[2], self.state[3], self.counts)
             if not len(self.counts):
                 raise ReaderError(f"{os.path.basename(self.path)} has no frames")
-            self._close_source_ranges()
+            if self._verify:
+                self.chunk_digests = {(key, d): h.all_digests() for key, info in self.info.items()
+                                      for d, h in info["hashes"].items()}
             self._save_chunk_sidecar()
             for info in self.info.values():
                 info["digest"] = info["hashes"][info["dtype"].str].hexdigest()
@@ -483,9 +479,10 @@ class IndexedStore:
             if self._record is not None and saved:
                 self._record.finish()
             self._warming = False
-            frame_index.save_cached(index)
-            text._save_table(self.reader, self.path, (self.state[2], self.state[3]),
-                             (index.starts, index.counts))
+            if not self._verify:
+                frame_index.save_cached(index)
+                text._save_table(self.reader, self.path, (self.state[2], self.state[3]),
+                                 (index.starts, index.counts))
             if progress:
                 progress(len(self.counts), len(self.counts))
         except NotFast:
@@ -557,37 +554,7 @@ class IndexedStore:
             record.discard()
             return 0
 
-    def _close_source_ranges(self):
-        """The frames end where the last window did; blank lines after the
-        last frame belong to no window. Hash them here (a few bytes) so the
-        ranges reach the file's end."""
-        size = self.state[2]
-        if not (self._source_ok and self._source) or self._source[-1][1] >= size:
-            return
-        from ffast.cache.source_digest import file_range_digests
-        start = self._source[-1][1]
-        [digest] = file_range_digests(self.path, [(start, size)])
-        self._source.append((start, size, digest))
-
-    def _source_arrays(self):
-        """``source|ranges`` and ``source|digests`` for the sidecar when the
-        windows cover the whole file; else {} and one line saying why."""
-        name = os.path.basename(self.path)
-        if not self._source_ok:
-            log.info("%s: the frame finder gave no source digests; none are kept", name)
-            return {}
-        ranges = np.array([(a, b) for a, b, _ in self._source], dtype=np.int64).reshape(-1, 2)
-        covers = (len(ranges) and ranges[0, 0] == 0 and ranges[-1, 1] == self.state[2]
-                  and (ranges[1:, 0] == ranges[:-1, 1]).all() and (ranges[:, 0] < ranges[:, 1]).all())
-        if not covers:
-            log.info("%s: the source windows do not cover the file; no source digests are kept", name)
-            return {}
-        digests = np.frombuffer(b"".join(d for _, _, d in self._source), dtype=np.uint8).reshape(-1, 32)
-        return {SOURCE_RANGES: ranges, SOURCE_DIGESTS: digests}
-
     def _reset_scan_state(self):
-        self._source = []
-        self._source_ok = True
         self.starts = np.empty(0, dtype=np.int64)
         self.ends = np.empty(0, dtype=np.int64)
         self.counts = np.empty(0, dtype=np.int64)
@@ -624,7 +591,6 @@ class IndexedStore:
             with zipfile.ZipFile(self._cache_path(a, b)) as archive:
                 if not archive.namelist():
                     raise ValueError("a batch is empty")
-        source = self._restore_source(state, ranges, byte_end)
         frames_length, chunks_length = int(state["frames_length"]), int(state["chunks_length"])
         if (frames_length != 16 * frame_end or record.frames_bin.stat().st_size < frames_length
                 or record.chunks_bin.stat().st_size < chunks_length):
@@ -671,9 +637,6 @@ class IndexedStore:
             self._remember_small(self._small_from_batch(a, b), a, b)
         os.truncate(record.frames_bin, frames_length)
         os.truncate(record.chunks_bin, chunks_length)
-        if source is not None:
-            os.truncate(record.source_bin, scan_record.SOURCE_RECORD * len(source))
-        self._source, self._source_ok = source or [], source is not None
         record.adopt(state, {(k, d): len(v) for (k, d), v in digests.items()})
         self.starts = starts
         self.ends = np.concatenate((starts[1:], [byte_end])).astype(np.int64)
@@ -688,26 +651,6 @@ class IndexedStore:
         self._kept_level = state["kept_level"]
         self._scan_allowance = state["allowance"]
         return byte_end
-
-    def _restore_source(self, state, ranges, byte_end):
-        """The source windows of the committed batches, or None when the
-        record holds none (made before ADR 0111, or a window had no digest).
-        Raises ValueError for a record that says it has them and does not."""
-        if not state.get("source_ok", False):
-            return None
-        length = int(state["source_length"])
-        record = self._record
-        if length != scan_record.SOURCE_RECORD * len(ranges) or record.source_bin.stat().st_size < length:
-            raise ValueError("its source digests do not match its windows")
-        raw = record.source_bin.read_bytes()[:length]
-        out = []
-        for i in range(0, length, scan_record.SOURCE_RECORD):
-            a, b = np.frombuffer(raw[i:i + 16], dtype="<i8").tolist()
-            out.append((a, b, raw[i + 16:i + 48]))
-        if (out[0][0] != 0 or out[-1][1] != byte_end
-                or any(x[1] != y[0] for x, y in zip(out, out[1:])) or any(a >= b for a, b, _ in out)):
-            raise ValueError("its source windows do not line up")
-        return out
 
     def _small_from_batch(self, a, b):
         """The per-frame columns (energies and frame fields) of one cached window."""
@@ -899,7 +842,6 @@ class IndexedStore:
             for d, h in info["hashes"].items():
                 arrays[f"{d}|{key}"] = np.frombuffer(
                     b"".join(h.all_digests()), dtype=np.uint8).reshape(-1, 32)
-        arrays.update(self._source_arrays())
         name = f"{self.identity}{CHUNKS_SUFFIX}"
         temp = None
         try:

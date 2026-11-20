@@ -467,9 +467,11 @@ you find out by staring at an empty plot.
 
 By default FFAST trusts a parsed cache when the file's size and modification
 time are unchanged, and a bundle when every batch file has the right size.
-`ffast-cli cache verify` is the strict check: it reads the source once and
-every cached batch once, and compares them with digests stored when the file
-was first parsed.
+`ffast-cli cache verify` is the strict check. It reads every cached batch and
+compares it with chunk digests stored when the file was first parsed. It also
+parses the source file again, writing nothing, and compares every column with
+the same digests, so it notices a source that changed with its size and
+modification time put back, and it covers the columns the cache did not keep.
 
 ```bash
 ffast-cli cache verify so3lr_10GB.xyz                  # the file's parsed cache
@@ -478,19 +480,20 @@ ffast-cli cache verify so3lr.ffast/dataset.ffast.json  # a bundle
 
 ```
 so3lr.ffast  (bundle, schema 1)
-  batches  411 of 412 verified; 81920-86016.npz: forces differ
   source   not found (looked in /scratch/u/so3lr_10GB.xyz and beside the bundle); not verified
+  batches  411 of 412 verified; 81920-86016.npz: forces differ
 1 mismatch. The bundle was not changed.
 ```
 
 Each line says what was verified, what differed and what could not be checked.
 The exit status is 0 when nothing differed, 1 when something did, and 2 when
-nothing could be checked (no finished cache, no stored digests). A parsed cache
-that differs is repaired by deleting the bad batch (or, when the source itself
-changed, the whole cache of that file); the next load parses it again. A bundle
-is never changed. Source digests are recorded only by a scan with the current
-`ffast-xyz` (`ffast install-fast-reader`); older caches still get their batches
-checked.
+nothing could be checked (no finished cache). A differing source is named by
+the frames whose values differ, in blocks of 16,384 rows. A parsed cache that
+differs is repaired by deleting the bad batch (or, when the source itself
+changed, the whole cache of that file); the next load parses it again and
+writes the batch. A bundle is never changed. Reading the source again takes
+about as long as the first load, so a check of a 10 GB file takes about
+20 seconds.
 
 ## More guides
 

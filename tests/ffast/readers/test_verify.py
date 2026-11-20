@@ -1,4 +1,4 @@
-"""The strict check proves source and cache against stored digests (ADR 0111, step 3)."""
+"""The strict check proves source and cache against stored digests (ADR 0111)."""
 import gc
 import os
 import shutil
@@ -6,7 +6,6 @@ import shutil
 import numpy as np
 import pytest
 
-from ffast.cache import source_digest as sd
 from ffast.io import cache_space
 from ffast.readers import bundle, text, verify
 from ffast.readers.indexed import CHUNKS_SUFFIX
@@ -15,13 +14,6 @@ from tests.ffast.readers.test_scan_naming import folder, forget_ram, scan, write
 from tests.ffast.readers.test_scan_record import cancel_after
 
 pytestmark = pytest.mark.skipif(not text.fast_parser_usable(), reason="Optional fast parser unavailable")
-
-
-@pytest.fixture(autouse=True)
-def finder_with_digests():
-    import ffast_xyz
-    if getattr(ffast_xyz, "SOURCE_SCHEME", None) != sd.SCHEME:
-        pytest.skip("the installed ffast-xyz predates source digests")
 
 
 def scanned(path):
@@ -50,6 +42,20 @@ def damage(file, key_prefix="forces", delta=0.5):
     data[key].flat[3] += delta
     np.savez(file, **data)
     return key
+
+
+def change_a_value(path, after=0.5, keep_time=True):
+    """Change one coordinate of the file in place (same size, same inode) and put
+    the modification time back. Returns the frame that holds it."""
+    st = os.stat(path)
+    with open(path, "r+b") as f:
+        data = f.read()
+        at = data.index(b" -1.5 ", int(len(data) * after))
+        f.seek(at)
+        f.write(b" -1.6 ")
+    if keep_time:
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    return data[:at].count(b"\n") // 42           # 40 atoms and two header lines per frame
 
 
 def snapshot(folder):
@@ -103,26 +109,69 @@ def test_an_unreadable_batch_counts_as_a_difference(folder, tmp_path):
     assert victim.name in by_part(report)["batches"].detail and not victim.exists()
 
 
-def test_a_changed_source_with_size_and_time_restored_deletes_the_whole_cache_but_not_the_pin(folder, tmp_path):
+def test_a_changed_source_with_size_and_time_restored_names_its_frames_and_deletes_the_whole_cache(folder, tmp_path):
     path = write_xyz(tmp_path / "a.xyz")
     identity = scanned(path)
-    st = os.stat(path)
     root = folder.parent
     cache_space.write_pins(root, [os.path.realpath(path)])
-    with open(path, "r+b") as f:                # same inode, same size
-        f.seek(st.st_size // 2)
-        byte = f.read(1)
-        f.seek(st.st_size // 2)
-        f.write(b"7" if byte != b"7" else b"8")
-    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    st = os.stat(path)
+    frame = change_a_value(path)
     assert (os.stat(path).st_size, os.stat(path).st_mtime_ns) == (st.st_size, st.st_mtime_ns)
     report = verify.verify(path, root=root)
-    assert report.exit_code == 1 and by_part(report)["source"].status == verify.DIFFERS
-    assert "differ" in by_part(report)["source"].detail
+    part = by_part(report)["source"]
+    assert report.exit_code == 1 and part.status == verify.DIFFERS
+    import re
+    spans = [(int(a.replace(",", "")), int(b.replace(",", "")))
+             for a, b in re.findall(r"frames ([\d,]+)-([\d,]+)", part.detail)]
+    assert spans and any(a <= frame <= b for a, b in spans), (frame, part.detail)
     assert not list(folder.glob(f"{identity}*"))
     assert cache_space.read_pins(root) == [os.path.realpath(path)]
-    # The next check has nothing to compare with.
-    assert verify.verify(path, root=root).exit_code == 2
+    assert verify.verify(path, root=root).exit_code == 2           # nothing left to compare with
+
+
+def test_a_change_in_a_column_the_cache_did_not_keep_is_still_caught(folder, tmp_path):
+    from ffast.io import budget as resources
+    resources.budget().parsed_limit = 1_000_000                    # per-frame values only: forces are not cached
+    path = write_xyz(tmp_path / "a.xyz")
+    scanned(path)
+    first = verify.verify(path, root=folder.parent)
+    assert by_part(first)["not cached"].status == verify.NOT_CHECKED and first.exit_code == 0
+    assert "covered by the source part" in by_part(first)["not cached"].detail
+    # Only the forces (the last three columns of an atom line) change.
+    st = os.stat(path)
+    with open(path, "r+b") as f:
+        data = f.read()
+        at = data.index(b" 0.1 0.2 0.3\n", len(data) // 2)
+        f.seek(at)
+        f.write(b" 0.1 0.2 0.4\n")
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    report = verify.verify(path, root=folder.parent)
+    assert report.exit_code == 1 and "forces" in by_part(report)["source"].detail
+
+
+def test_a_file_in_another_state_is_read_again_and_compared_anyway(folder, tmp_path):
+    path = write_xyz(tmp_path / "a.xyz")
+    identity = scanned(path)
+    os.utime(path, ns=(1_700_000_000 * 10**9, 1_700_000_000 * 10**9))        # same bytes, new time
+    report = verify.verify(path, root=folder.parent)
+    part = by_part(report)["source"]
+    assert report.exit_code == 0 and part.status == verify.VERIFIED
+    assert "differ from the cache's" in part.detail and "anyway" in part.detail
+    assert list(folder.glob(f"{identity}*"))                                  # nothing deleted
+    change_a_value(path, keep_time=False)                                     # now the bytes differ too
+    changed = verify.verify(path, root=folder.parent)
+    assert changed.exit_code == 1 and "differ from the cache's" in by_part(changed)["source"].detail
+    assert not list(folder.glob(f"{identity}*"))
+
+
+def test_a_check_writes_nothing_and_leaves_no_lock_or_record(folder, tmp_path):
+    path = write_xyz(tmp_path / "a.xyz")
+    scanned(path)
+    before = snapshot(tmp_path)
+    for _ in range(2):
+        assert verify.verify(path, root=folder.parent).exit_code == 0
+    after = snapshot(tmp_path)
+    assert after == before                    # no batch, no record, no lock, no frame list, nothing touched
 
 
 def test_a_bundle_with_a_damaged_batch_is_reported_and_left_alone(folder, tmp_path):
@@ -151,19 +200,6 @@ def test_a_bundle_with_no_source_says_where_it_looked(folder, tmp_path):
     assert parts["source"].status == verify.NOT_CHECKED
     assert str(tmp_path / "a.xyz") in parts["source"].detail
     assert str(tmp_path / "a.xyz") in parts["source"].detail and "not found" in parts["source"].detail
-    assert parts["batches"].status == verify.VERIFIED and report.exit_code == 0
-
-
-def test_a_cache_without_source_digests_still_checks_its_batches(folder, tmp_path):
-    path = write_xyz(tmp_path / "a.xyz")
-    identity = scanned(path)
-    sidecar = folder / f"{identity}{CHUNKS_SUFFIX}"
-    with np.load(sidecar) as z:
-        kept = {k: z[k] for k in z.files if not k.startswith("source|")}
-    np.savez(sidecar, **kept)
-    report = verify.verify(path, root=folder.parent)
-    parts = by_part(report)
-    assert parts["source"].status == verify.NOT_CHECKED and "not recorded" in parts["source"].detail
     assert parts["batches"].status == verify.VERIFIED and report.exit_code == 0
 
 
@@ -222,11 +258,7 @@ def test_a_changed_source_deletes_only_its_own_identity_not_other_copies_of_the_
     other = "ab" * 32
     (folder / f"{other}.json").write_text("{}")
     (folder / f"{other}.source.json").write_text('{"path": "%s"}' % os.path.realpath(path))
-    with open(path, "r+b") as f:
-        st = os.fstat(f.fileno())
-        f.seek(100)
-        f.write(b"9" if f.read(1) != b"9" else b"8")
-    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    change_a_value(path)
     assert verify.verify(path, root=folder.parent).exit_code == 1
     assert not list(folder.glob(f"{identity}*")) and (folder / f"{other}.json").exists()
 

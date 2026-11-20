@@ -63,8 +63,8 @@ def states(monkeypatch):
     seen = []
     real = ffast_xyz.find_frames
 
-    def spy(path, offset, limit, threads=1, digest=True):
-        got = real(path, offset, limit, threads, digest)
+    def spy(path, offset, limit, threads=1):
+        got = real(path, offset, limit, threads)
         seen.append(got[3])
         return got
     monkeypatch.setattr(ffast_xyz, "find_frames", spy)

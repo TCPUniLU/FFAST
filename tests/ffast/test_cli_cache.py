@@ -145,16 +145,14 @@ def _verify_setup(tmp_path, monkeypatch):
     return path, tmp_path / "parsed" / "batches", identity
 
 
-def _needs_digests():
-    from ffast.cache import source_digest
+def _needs_fast_parser():
     from ffast.readers import text
-    ffast_xyz = pytest.importorskip("ffast_xyz")
-    if not text.fast_parser_usable() or getattr(ffast_xyz, "SOURCE_SCHEME", None) != source_digest.SCHEME:
-        pytest.skip("the installed ffast-xyz predates source digests")
+    if not text.fast_parser_usable():
+        pytest.skip("Optional fast parser unavailable")
 
 
 def test_verify_exits_0_and_says_all_verified(tmp_path, monkeypatch, capsys):
-    _needs_digests()
+    _needs_fast_parser()
     path, folder, identity = _verify_setup(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as stop:
         main(["cache", "verify", path])
@@ -166,7 +164,7 @@ def test_verify_exits_0_and_says_all_verified(tmp_path, monkeypatch, capsys):
 
 def test_verify_exits_1_and_counts_the_mismatches(tmp_path, monkeypatch, capsys):
     import numpy as np
-    _needs_digests()
+    _needs_fast_parser()
     path, folder, identity = _verify_setup(tmp_path, monkeypatch)
     victim = sorted(folder.glob(f"{identity}-[0-9]*-[0-9]*.npz"))[1]
     with np.load(victim) as z:

@@ -2,11 +2,13 @@
 (ADR 0111).
 
 ``verify(path)`` takes a source ``.xyz``/``.extxyz`` file (its finished parsed
-cache is found by path and file state) or a bundle's ``dataset.ffast.json``.
-It reads the source once and every batch once, and compares
+cache is found by path) or a bundle's ``dataset.ffast.json``. It reads the
+source and every batch, and compares
 
-- the source bytes with the digests of the scan's windows (``source|`` arrays
-  of the chunk sidecar), and
+- the source: it is parsed again, window by window and without writing
+  anything, and the chunk digest of every column is compared with the chunk
+  sidecar the first scan kept (this covers the columns the cache did not
+  keep); and
 - the values of every batch with the chunk digests of the sidecar.
 
 The report says, part by part, what was verified, what differed and what
@@ -26,7 +28,6 @@ from pathlib import Path
 import numpy as np
 
 from ffast.cache.fingerprint import CHUNK_ROWS, ChunkHasher
-from ffast.cache.source_digest import file_range_digests
 from ffast.readers import bundle
 from ffast.readers.contract import ReaderError
 
@@ -71,26 +72,82 @@ def _and_more(items, shown=LISTED):
 
 # -- the source -----------------------------------------------------------------
 
-def _check_source(path, ranges, digests, threads, progress):
-    """The part for a source file against its recorded windows."""
-    ranges = np.asarray(ranges, dtype=np.int64).reshape(-1, 2)
-    size = os.path.getsize(path)
-    if len(ranges) == 0 or int(ranges[-1, 1]) != size:
-        end = int(ranges[-1, 1]) if len(ranges) else 0
-        return Part("source", DIFFERS, f"{path} has {size:,} bytes; {end:,} were parsed")
-    got = file_range_digests(path, ranges.tolist(), threads)
-    wrong = [(int(a), int(b)) for (a, b), g, want in zip(ranges.tolist(), got, digests)
-             if g != bytes(want)]
-    if not wrong:
-        return Part("source", VERIFIED, f"{len(ranges)} byte ranges, {size:,} bytes")
-    merged = []
-    for a, b in wrong:
-        if merged and merged[-1][1] == a:
-            merged[-1] = (merged[-1][0], b)
+STALE = ("the file's size, modification time or inode differ from the cache's, "
+         "so it was read again and compared anyway")
+
+
+def _frame_ranges(chunks_bad, per_atom, offsets, n_frames):
+    """The frames that hold the rows of the differing chunks, as merged
+    ``(first, last)`` pairs."""
+    spans = []
+    for i in sorted(chunks_bad):
+        lo, hi = i * CHUNK_ROWS, (i + 1) * CHUNK_ROWS
+        if per_atom:
+            total = int(offsets[-1])
+            hi = min(hi, total)
+            first = int(np.searchsorted(offsets, lo, side="right")) - 1
+            last = int(np.searchsorted(offsets, max(hi - 1, lo), side="right")) - 1
         else:
-            merged.append((a, b))
-    named = [f"{a:,}-{b:,}" for a, b in merged]
-    return Part("source", DIFFERS, f"bytes differ at {_and_more(named)}")
+            first, last = lo, min(hi, n_frames) - 1
+        spans.append((max(first, 0), min(max(last, 0), max(n_frames - 1, 0))))
+    merged = []
+    for first, last in sorted(spans):
+        if merged and first <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], last))
+        else:
+            merged.append((first, last))
+    return merged
+
+
+def _check_source(path, info, chunks, n_frames, progress, stale=False):
+    """The part for a source file: parse it again, writing nothing, and compare
+    the chunk digest of every column with ``chunks``."""
+    from ffast.io.extxyz_arrays import NotFast
+    from ffast.readers import text
+    from ffast.readers.indexed import IndexedStore
+    from ffast.readers.text import per_atom
+    from ffast.readers.xyz_reader import XyzReader
+
+    note = ("; " + STALE) if stale else ""
+    if not text.fast_parser_usable():
+        return Part("source", NOT_CHECKED, "the fast XYZ parser is needed to read the source again")
+    try:
+        store = IndexedStore(XyzReader, str(path), XyzReader(str(path)).contents(), [], [], [], [],
+                             workers=None, scan_source=True, verify=True, progress=progress)
+    except NotFast:
+        return Part("source", NOT_CHECKED, "the file needs the Python scanner, which verify does not use" + note)
+    except (ReaderError, ValueError, OSError) as exc:
+        return Part("source", DIFFERS, f"it can no longer be read as it was parsed ({exc})" + note)
+    found = len(store.counts)
+    if found != n_frames:
+        return Part("source", DIFFERS, f"it has {found:,} frames; the cache has {n_frames:,}" + note)
+    wrong, named = {}, []
+    if set(store.info) != set(info):
+        gone, new = sorted(set(info) - set(store.info)), sorted(set(store.info) - set(info))
+        what = ([f"no longer has {_and_more(gone, 3)}"] if gone else []) + \
+               ([f"now has {_and_more(new, 3)}"] if new else [])
+        return Part("source", DIFFERS, "its columns differ: it " + " and ".join(what) + note)
+    for key, facts in info.items():
+        member = f"{np.dtype(facts['dtype']).str}|{key}"
+        again = store.chunk_digests.get((key, np.dtype(facts["dtype"]).str))
+        expected = chunks.get(member)
+        if again is None or expected is None:
+            named.append(f"{key} (not comparable)")
+            continue
+        bad = {i for i in range(max(len(again), len(expected)))
+               if i >= len(again) or i >= len(expected) or again[i] != bytes(expected[i])}
+        if bad:
+            wrong[key] = _frame_ranges(bad, per_atom(key), store.offsets, found)
+    if not wrong and not named:
+        return Part("source", VERIFIED, f"parsed again: {found:,} frames, {len(info)} columns{note}")
+    spans = {}
+    for key, ranges in wrong.items():
+        for first, last in ranges:
+            spans.setdefault((first, last), []).append(_short(key))
+    merged = []
+    for (first, last), keys in sorted(spans.items()):
+        merged.append(f"frames {first:,}-{last:,} ({', '.join(dict.fromkeys(keys))})")
+    return Part("source", DIFFERS, "values differ at " + _and_more(merged + named) + note)
 
 
 # -- the batches ----------------------------------------------------------------
@@ -306,17 +363,6 @@ def _sidecar(path):
         return {name: found[name] for name in found.files}
 
 
-def _source_arrays(chunks):
-    if "source|ranges" in chunks and "source|digests" in chunks:
-        ranges, digests = chunks["source|ranges"], chunks["source|digests"]
-        if len(ranges) == len(digests) and len(ranges):
-            return ranges, digests
-    return None
-
-
-NO_DIGESTS = "source digests were not recorded (a cache made before ADR 0111, or with an older ffast-xyz)"
-
-
 def verify(path, *, root=None, threads=None, progress=None) -> Report:
     """Check the source file or bundle at ``path`` (ADR 0111). ``root`` is the
     parsed-cache root (default: the usual one). ``progress(stage, done,
@@ -367,22 +413,38 @@ def _verify_bundle(path, threads, progress):
     except (KeyError, TypeError, ValueError) as exc:
         report.parts.append(Part("description", NOT_CHECKED, f"{bundle.DESCRIPTION} is damaged ({exc})"))
         return report
-    report.parts.extend(_source_part(chunks, record, folder, threads, progress))
+    n_frames = int(description.get("n_frames", entries[-1][1] if entries else 0))
+    report.parts.extend(_source_part(chunks, record, folder, info, n_frames, progress))
     parts, _ = _batch_part(entries, info, chunks, _stage(progress, "batches"), missing_is_difference=True,
                            threads=threads)
     report.parts.extend(parts)
     return report
 
 
-def _source_part(chunks, record, folder, threads, progress):
-    recorded = _source_arrays(chunks)
-    if recorded is None:
-        return [Part("source", NOT_CHECKED, NO_DIGESTS)]
+def _source_part(chunks, record, folder, info, n_frames, progress):
     source = bundle.find_source(folder, record)
     if source is None:
         places = " and ".join(str(p) for p in bundle.places_looked(folder, record))
         return [Part("source", NOT_CHECKED, f"not found (looked in {places}); not verified")]
-    return [_check_source(source, *recorded, threads, _stage(progress, "source"))]
+    return [_check_source(source, info, chunks, n_frames, _stage(progress, "source"))]
+
+
+def _find_cache(root, folder, absolute, current):
+    """``(identity, stale, why)``: the finished cache of the file. ``stale`` is
+    True when it was made for the file in another state (size, modification
+    time or inode), which the check reads again and compares anyway. ``why``
+    says what is missing when there is none."""
+    from ffast.io import cache_space
+    if (folder / f"{current}.json").exists():
+        return current, False, None
+    if (folder / f"{current}.progress.json").exists():
+        return None, False, "the scan is not finished; load the file fully first"
+    real = os.path.realpath(absolute)
+    mine = [e for e in cache_space.entries(root)
+            if e.kind == "batches" and e.path == real and (folder / f"{e.key}.json").exists()]
+    if mine:
+        return max(mine, key=lambda e: e.last_used).key, True, None
+    return None, False, "no finished cache for the file"
 
 
 def _verify_cache(path, root, threads, progress):
@@ -397,21 +459,17 @@ def _verify_cache(path, root, threads, progress):
     root = Path(root) if root is not None else frame_cache._folder()
     folder = root / "batches"
     absolute = os.path.abspath(path)
-    identity = IndexedStore.identity_of(XyzReader, absolute, file_state(absolute))
-    manifest_file = folder / f"{identity}.json"
+    current = IndexedStore.identity_of(XyzReader, absolute, file_state(absolute))
+    identity, stale, why = _find_cache(root, folder, absolute, current)
+    if identity is None:
+        report.parts.append(Part("cache", NOT_CHECKED, why))
+        return report
     try:
-        manifest = json.loads(manifest_file.read_text())
+        manifest = json.loads((folder / f"{identity}.json").read_text())
         info = {key: {"dtype": np.dtype(f["dtype"]), "tail": tuple(f["tail"])}
                 for key, f in manifest["columns"].items()}
         ranges = [tuple(map(int, r)) for r in manifest["ranges"]]
         sidecar = manifest["chunks"]
-    except FileNotFoundError:
-        if (folder / f"{identity}.progress.json").exists():
-            why = "the scan is not finished; load the file fully first"
-        else:
-            why = "no finished cache for the file as it is now"
-        report.parts.append(Part("cache", NOT_CHECKED, why))
-        return report
     except (OSError, ValueError, KeyError, TypeError):
         report.parts.append(Part("cache", NOT_CHECKED,
                                  "the cache has no chunk digests to check against (made before ADR 0107)"))
@@ -421,9 +479,7 @@ def _verify_cache(path, root, threads, progress):
     except (OSError, ValueError, EOFError, zipfile.BadZipFile) as exc:
         report.parts.append(Part("cache", NOT_CHECKED, f"the chunk digests cannot be read ({exc})"))
         return report
-    recorded = _source_arrays(chunks)
-    source_part = (Part("source", NOT_CHECKED, NO_DIGESTS) if recorded is None
-                   else _check_source(absolute, *recorded, threads, _stage(progress, "source")))
+    source_part = _check_source(absolute, info, chunks, ranges[-1][1], _stage(progress, "source"), stale)
     report.parts.append(source_part)
     entries = [(a, b, folder / f"{identity}-{a}-{b}.npz", None) for a, b in ranges]
     parts, bad = _batch_part(entries, info, chunks, _stage(progress, "batches"), missing_is_difference=False,
