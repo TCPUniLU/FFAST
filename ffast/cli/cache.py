@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
 from ffast.io import cache_space, frame_cache
 
@@ -115,6 +116,19 @@ def cmd_delete(args: argparse.Namespace) -> None:
     print(f"Deleted {path}: {freed / GB:.2f} GB freed")
 
 
+def cmd_export(args: argparse.Namespace) -> None:
+    from ffast.readers import bundle
+    from ffast.readers.contract import ReaderError
+    started = time.monotonic()
+    try:
+        bundle.export(args.path, args.output, force=args.force)
+    except ReaderError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+    size = sum(f.stat().st_size for f in args.output.rglob("*") if f.is_file())
+    print(f"Wrote {args.output}: {size / GB:.2f} GB in {time.monotonic() - started:.1f} s")
+
+
 def register(sub) -> None:
     parser = sub.add_parser("cache", help="Parsed cache commands")
     cache_sub = parser.add_subparsers(dest="cache_command")
@@ -136,3 +150,9 @@ def register(sub) -> None:
     cmd.add_argument("path")
     cmd.add_argument("--yes", action="store_true", help="Do not ask when the file is pinned")
     cmd.set_defaults(func=cmd_delete)
+
+    cmd = cache_sub.add_parser("export", help="Write a file's parsed dataset as a portable bundle folder")
+    cmd.add_argument("path", help="The .xyz or .extxyz file")
+    cmd.add_argument("-o", "--output", required=True, type=Path, help="The bundle folder to write")
+    cmd.add_argument("--force", action="store_true", help="Replace the folder when it exists")
+    cmd.set_defaults(func=cmd_export)
