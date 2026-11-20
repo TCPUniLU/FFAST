@@ -129,6 +129,43 @@ def cmd_export(args: argparse.Namespace) -> None:
     print(f"Wrote {args.output}: {size / GB:.2f} GB in {time.monotonic() - started:.1f} s")
 
 
+def _closing_line(report) -> str:
+    if report.exit_code == 2:
+        why = next((p.detail for p in report.parts if p.status == "not checked"), "nothing was recorded")
+        return f"nothing could be checked: {why}"
+    if report.exit_code == 0:
+        return "all verified" if all(p.status == "verified" for p in report.parts) else \
+            "nothing differed; some parts were not checked (see above)"
+    n = report.mismatches
+    text = f"{n} mismatch{'es' if n != 1 else ''}. "
+    if report.kind == "bundle":
+        return text + "The bundle was not changed."
+    if report.changed:
+        return text + f"Deleted {len(report.changed)} cache file{'s' if len(report.changed) != 1 else ''}; " \
+                      "the next load parses them again."
+    return text + "Nothing was deleted."
+
+
+def cmd_verify(args: argparse.Namespace) -> None:
+    """Prove a parsed cache or a bundle against its stored digests (ADR 0111)."""
+    from ffast.readers import verify
+    progress = None
+    if sys.stderr.isatty():
+        def progress(stage, done, total):
+            print(f"\r{stage}: {done}/{total}", end="", file=sys.stderr, flush=True)
+            if done >= total:
+                print("\r" + " " * 40 + "\r", end="", file=sys.stderr, flush=True)
+    report = verify.verify(args.path, progress=progress)
+    print(f"{report.target}  ({report.kind}{', ' + report.note if report.note else ''})")
+    width = max((len(p.name) for p in report.parts), default=0)
+    for part in report.parts:
+        detail = f"{part.status}: {part.detail}" if part.status != "verified" else \
+            "verified" + (f" ({part.detail})" if part.detail else "")
+        print(f"  {part.name:<{width}}  {detail}")
+    print(_closing_line(report))
+    sys.exit(report.exit_code)
+
+
 def register(sub) -> None:
     parser = sub.add_parser("cache", help="Parsed cache commands")
     cache_sub = parser.add_subparsers(dest="cache_command")
@@ -156,3 +193,8 @@ def register(sub) -> None:
     cmd.add_argument("-o", "--output", required=True, type=Path, help="The bundle folder to write")
     cmd.add_argument("--force", action="store_true", help="Replace the folder when it exists")
     cmd.set_defaults(func=cmd_export)
+
+    cmd = cache_sub.add_parser(
+        "verify", help="Check a source file's parsed cache, or a bundle, against its stored digests")
+    cmd.add_argument("path", help="The .xyz or .extxyz file, or a bundle's dataset.ffast.json")
+    cmd.set_defaults(func=cmd_verify)

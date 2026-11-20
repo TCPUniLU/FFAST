@@ -122,3 +122,72 @@ def test_a_path_whose_file_is_gone_can_be_unpinned_and_deleted(root, tmp_path):
     main(["cache", "pin", gone])
     main(["cache", "delete", gone, "--yes"])
     assert not (root / "a").exists() and cache_space.read_pins(root) == []
+
+
+# -- verify (ADR 0111) -----------------------------------------------------------
+
+def _verify_setup(tmp_path, monkeypatch):
+    import gc
+
+    from ffast.io import budget as resources
+    from tests.ffast.readers.test_scan_naming import scan, write_xyz
+    owner = resources.Budget(ram_bytes=512 * 1024, parsed_bytes=2**30, result_bytes=8 * 2**20)
+    owner.limit = 16 * 2**20
+    monkeypatch.setattr(resources, "_budget", owner)
+    from ffast.io import frame_index
+    monkeypatch.setattr(frame_cache, "CACHE_DIR", tmp_path / "parsed")
+    monkeypatch.setattr(frame_index, "CACHE_DIR", tmp_path / "index")
+    path = write_xyz(tmp_path / "a.xyz")
+    store = scan(path)
+    identity = store.identity
+    del store
+    gc.collect()
+    return path, tmp_path / "parsed" / "batches", identity
+
+
+def _needs_digests():
+    from ffast.cache import source_digest
+    from ffast.readers import text
+    ffast_xyz = pytest.importorskip("ffast_xyz")
+    if not text.fast_parser_usable() or getattr(ffast_xyz, "SOURCE_SCHEME", None) != source_digest.SCHEME:
+        pytest.skip("the installed ffast-xyz predates source digests")
+
+
+def test_verify_exits_0_and_says_all_verified(tmp_path, monkeypatch, capsys):
+    _needs_digests()
+    path, folder, identity = _verify_setup(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as stop:
+        main(["cache", "verify", path])
+    out = capsys.readouterr().out
+    assert stop.value.code == 0
+    assert out.splitlines()[0].startswith(path) and "cache" in out.splitlines()[0]
+    assert "source" in out and "batches" in out and out.rstrip().endswith("all verified")
+
+
+def test_verify_exits_1_and_counts_the_mismatches(tmp_path, monkeypatch, capsys):
+    import numpy as np
+    _needs_digests()
+    path, folder, identity = _verify_setup(tmp_path, monkeypatch)
+    victim = sorted(folder.glob(f"{identity}-[0-9]*-[0-9]*.npz"))[1]
+    with np.load(victim) as z:
+        data = {k: z[k].copy() for k in z.files}
+    key = next(k for k in data if k.startswith("forces"))
+    data[key].flat[3] += 0.5
+    np.savez(victim, **data)
+    with pytest.raises(SystemExit) as stop:
+        main(["cache", "verify", path])
+    out = capsys.readouterr().out
+    assert stop.value.code == 1
+    assert victim.name in out and "1 mismatch. Deleted" in out.rstrip().splitlines()[-1]
+
+
+def test_verify_exits_2_when_nothing_could_be_checked(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "cache"
+    root.mkdir()
+    monkeypatch.setattr(frame_cache, "CACHE_DIR", root)
+    path = tmp_path / "never.xyz"
+    path.write_text("1\n\nH 0 0 0\n")
+    with pytest.raises(SystemExit) as stop:
+        main(["cache", "verify", str(path)])
+    assert stop.value.code == 2
+    assert capsys.readouterr().out.rstrip().splitlines()[-1].startswith("nothing could be checked: no finished cache")
