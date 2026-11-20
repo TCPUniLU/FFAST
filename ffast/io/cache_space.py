@@ -501,3 +501,27 @@ def delete_dataset(root, path):
             for h in handles:
                 h.close()
         return freed
+
+
+def delete_identity(root, identity):
+    """Delete the files of one batch identity (its manifest, digests, batches
+    and markers), not the other copies of the same source file. Returns the
+    paths deleted. Raises ``InUse`` when the copy is open. Pins are untouched."""
+    root = Path(root)
+    with space_lock(root):
+        mine = [e for e in _batch_entries(root) if e.key == identity]
+        handles = _lock_all(mine)
+        if handles is None:
+            raise InUse(identity)
+        gone = []
+        try:
+            for e in mine:
+                for f in e.files:
+                    if f.exists():
+                        _unlink(f)
+                        gone.append(f)
+                _unlink(e.open_file)
+        finally:
+            for h in handles:
+                h.close()
+        return gone
