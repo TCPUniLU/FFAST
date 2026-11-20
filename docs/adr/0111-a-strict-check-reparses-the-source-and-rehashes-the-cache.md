@@ -1,4 +1,4 @@
-# A strict check proves source and cache against stored digests
+# A strict check re-parses the source and re-hashes the cache
 
 Status: Accepted and implemented 2026-11-20. Builds on ADRs 0107, 0108 and 0110.
 Spec v1.1 §4.3 (validation policies), step 7 of the agreed order.
