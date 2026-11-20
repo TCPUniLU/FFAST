@@ -259,3 +259,19 @@ def test_a_prediction_exported_to_its_own_bundle_loads_as_a_separate_file(folder
     assert errors == []
     stored = {kind: payload for kind, payload, _, _ in env.data.stored}
     assert np.array_equal(np.asarray(stored["energy"]["energy"]), np.arange(3000) * 0.5 + 0.25)
+
+
+def test_per_frame_values_are_read_once_at_open_not_once_per_frame(folder, tmp_path, monkeypatch):  # noqa: F811
+    from ffast.readers import bundle_store
+    path, ds, target = exported(tmp_path, "predictions")
+    expected = np.array(np.asarray(ds.E))
+    reads = []
+    real = bundle_store._read_batch_slice
+    monkeypatch.setattr(bundle_store, "_read_batch_slice",
+                        lambda *a, **k: reads.append(a[1]) or real(*a, **k))
+    other = opened(target, "predictions")
+    at_open = len(reads)
+    assert {"energy:energy", "energy:pred_energy"} <= set(reads)
+    for frame in range(0, 3000, 3):                      # a metric asking a frame at a time
+        assert other.E[frame:frame + 1][0] == expected[frame]
+    assert len(reads) == at_open

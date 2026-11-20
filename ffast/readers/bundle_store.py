@@ -18,6 +18,7 @@ import numpy as np
 
 from ffast.cache.fingerprint import SCHEME
 from ffast.io.budget import budget
+from ffast.io.extxyz_arrays import NotEnoughMemory
 from ffast.readers import bundle
 from ffast.readers.contract import ReaderError
 from ffast.readers.indexed import IndexedStore, _read_batch, _read_batch_slice
@@ -73,8 +74,35 @@ class BundleStore(IndexedStore):
             h.update(bytes.fromhex(self.info[key]["digest"]))
         self.identity = "bundle-" + h.hexdigest()
         self._small_columns = {}
+        self._small_limit = min(128 * 2**20, budget().limit // 8)
         self._warming = False
         self._source = None
+        self._load_small()
+
+    def _load_small(self):
+        """Keep the per-frame values (energies and frame fields) in memory, as
+        the parsed cache does: metrics read them a frame at a time, and a read
+        of a batch file for each would be slow. What does not fit, or sits in a
+        damaged batch, is read from the batches as it is asked for."""
+        n = len(self.counts)
+        for key, info in self.info.items():
+            size = n * info["dtype"].itemsize
+            if (not key.startswith(("energy:", "frame:")) or info["tail"]
+                    or size > self._small_limit - sum(v.nbytes for v in self._small_columns.values())):
+                continue
+            try:
+                with budget().reserve(size) as lease:
+                    array = np.empty(n, dtype=info["dtype"])
+                    for a, b in self.ranges:
+                        value = _read_batch_slice(self._cache_path(a, b), key, 0, b - a, info, touch=False)
+                        if value is None:
+                            raise ValueError("a column cannot be read in place")
+                        array[a:b] = value
+                    budget().retain(array, lease)
+            except (NotEnoughMemory, *_DAMAGED):
+                continue
+            array.flags.writeable = False
+            self._small_columns[key] = array
 
     # -- reads ---------------------------------------------------------------
 
