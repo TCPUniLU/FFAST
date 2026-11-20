@@ -495,22 +495,37 @@ def execute(fn, kwargs, params):
             return WithWarnings(store_result(result), [PERIODIC_WARNING])
         return result
     if name == "force_mae_per_structure_per_element_kde":
-        from ffast.metrics.segments import segmentSums
+        from ffast.io.result_array import result_writer
 
-        offsets = kwargs["offsets"]
-        curves = []
-        for element in np.unique(kwargs["elements"]):
+        # One pass over the forces for every element: each structure's MAE
+        # per element is written to one stored column per element, and each
+        # curve reads its column (twice above the exact-KDE size), never the
+        # forces again. One pass per element took ~70 s each on 463M atoms.
+        offsets = np.asarray(kwargs["offsets"])
+        unique = np.unique(kwargs["elements"])
+        width = len(unique)
 
-            def kernel(force_difference, elements, offsets, target=element):
-                mask = (elements == target).astype(float)
-                total = segmentSums(
-                    np.abs(force_difference).sum(axis=1) * mask, offsets
-                )
-                count = segmentSums(mask, offsets)
-                with np.errstate(all="ignore"):
-                    return total / (3 * count)
+        def kernel(force_difference, elements, offsets):
+            frames = len(offsets) - 1
+            slot = np.searchsorted(unique, np.asarray(elements))
+            frame = np.repeat(np.arange(frames), np.diff(offsets))
+            cell = frame * width + slot
+            total = np.bincount(cell, np.abs(force_difference).sum(axis=1),
+                                frames * width).reshape(frames, width)
+            count = np.bincount(cell, None, frames * width).reshape(frames, width)
+            with np.errstate(all="ignore"):
+                return total / (3 * count)
 
-            values = frame_map(kernel, offsets, kwargs)
-            curves.append(kde(values, "abs"))
-        return np.stack(curves)
+        values = frame_map(kernel, offsets, kwargs, (width,))
+        writers = [result_writer((len(offsets) - 1,), float) for _ in unique]
+        try:
+            for _, _, chunk in blocks(values):
+                for column, writer in enumerate(writers):
+                    writer.append(chunk[:, column])
+            columns = [writer.finish() for writer in writers]
+        except BaseException:
+            for writer in writers:
+                writer.abort()
+            raise
+        return np.stack([kde(column, "abs") for column in columns])
     return NOT_HANDLED

@@ -768,3 +768,30 @@ def test_stopped_colouring_publishes_nothing(workspace, monkeypatch):
         assert not any(g.from_colour for g in executor._force_scans.groups.values())
     finally:
         executor.shutdown()
+
+
+@pytest.mark.parametrize("frames", [300, 25_000])
+def test_per_element_mae_distribution_reads_the_forces_once(workspace, frames):
+    """Every element's curve comes from one pass over the forces, however
+    many elements; before, each element read them once (twice above the
+    exact-KDE size)."""
+    from ffast.metrics.builtin.atomic_metrics import _per_structure_element_mae
+    from ffast.metrics.streaming import kde
+
+    name = "ffast.force_mae_per_structure_per_element_kde"
+    true, pred, offsets = inputs(frames)
+    elements = np.random.default_rng(7).choice([1, 6, 7, 8, 16], size=len(true))
+    reads = [0]
+    source = Source(_counted(true, reads), _counted(pred, reads), offsets)
+    source.values["reference.elements"] = elements
+    executor = ServerExecutor(default_registry)
+    try:
+        got = executor.run(name, source, {})
+        assert not isinstance(got, MetricFailure), got
+        assert reads == [2 * len(true)]
+        fd = pred - true
+        want = np.stack([kde(_per_structure_element_mae(fd, elements, offsets, z), "abs")
+                         for z in np.unique(elements)])
+        np.testing.assert_allclose(np.asarray(got.values), want, rtol=1e-9, atol=1e-12)
+    finally:
+        executor.shutdown()
