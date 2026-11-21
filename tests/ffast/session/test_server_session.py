@@ -747,6 +747,8 @@ class _FakeResults:
 def _store_env(compute, datasets=None, models=None, missing=()):
     """A fake env with a real result store over a fake compute step."""
     from types import SimpleNamespace
+    import ffast.metrics.builtin  # noqa: F401 — the server registers them at start (cli/main.py); the
+    # store asks the registry whether a metric needs a prediction, and an unknown one gets no answer
     from ffast.metrics.result_store import MetricResultStore
 
     env = _FakeEnv(datasets=datasets or {"ds1": object()}, models=models, cache={})
