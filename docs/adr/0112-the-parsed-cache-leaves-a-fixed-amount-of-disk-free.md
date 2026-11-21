@@ -71,7 +71,20 @@ cache folder:
 | New rule, first load | 139.0 s | 22.1 s (CPU 73 s) | 21.9 GB |
 | New rule, second start | 2.7 s | 22.2 s (CPU 73 s) | 21.9 GB |
 
-The first load costs 26 s more, once, for writing the forces. Every force
+The first load cost 26 s more, once, for writing the forces: each batch
+was written and flushed in line, so the next window's parse waited for it.
+A load now writes each batch on a writer thread while it parses the next
+window (both load paths; at most one write waits, so at most two windows
+are held). The scan record of a window is taken when the window is done and
+written by the writer thread after its batch, so it still names exactly the
+written batches (ADR 0107).
+
+| Run | Load | Basic Errors force pass |
+|---|---|---|
+| New rule + writer thread, first load | 118.6 s | 23.0 s (CPU 76 s) |
+| New rule + writer thread, second start | 2.7 s | 22.9 s |
+
+The first load is now 6 s longer than with the old rule (112.7 s), not 26 s. Every force
 pass after it, in that session and in later ones, takes 22 s instead of
 69 s, and 6x less CPU: it reads the cache (about 1 GB/s) instead of parsing
 the text. The disk had 23.7 GiB free afterwards, above the 20 GiB kept free.

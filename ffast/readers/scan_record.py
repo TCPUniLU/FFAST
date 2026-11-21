@@ -151,6 +151,29 @@ class ScanRecord:
         except OSError:
             pass
 
+    @staticmethod
+    def snapshot(store):
+        """What ``commit`` reads of ``store``, as it is now: the scan goes on
+        to the next window while this one's batch is still being written,
+        and its record must describe this window (ADR 0112)."""
+        from types import SimpleNamespace
+
+        def frozen(h):
+            return SimpleNamespace(digests=(lambda d=h.digests(): d),
+                                   tail=(lambda t=np.array(h.tail(), copy=True): t),
+                                   rows=h.rows)
+
+        info = {key: {"hashes": {d: frozen(h) for d, h in value["hashes"].items()},
+                      "dtype": value["dtype"], "tail": tuple(value["tail"]),
+                      "has_nan": value["has_nan"]}
+                for key, value in store.info.items()}
+        return SimpleNamespace(
+            path=store.path, state=store.state, starts=store.starts, counts=store.counts,
+            offsets=store.offsets, info=info, ranges=list(store.ranges),
+            element_set=set(store.element_set), first_numbers=store.first_numbers,
+            uniform=store.uniform, _kept_level=store._kept_level,
+            _scan_allowance=store._scan_allowance)
+
     def commit(self, store, a, b, end):
         """Record that frames ``[0, b)`` and the bytes before ``end`` are done.
         Call after the batch of window ``[a, b)`` is in place."""

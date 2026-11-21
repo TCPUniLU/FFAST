@@ -1392,3 +1392,34 @@ def test_the_allowance_leaves_the_keep_free_amount(tmp_path, small_budget, monke
     assert cache_space.allowance(tmp_path, 1050) == 80      # what it holds + 50 spare
     assert cache_space.allowance(tmp_path, 5000) == 100     # never past the parsed limit
     assert cache_space.allowance(tmp_path, 900) == 30       # short of keep-free: no growth
+
+
+def test_a_scan_writes_its_batches_beside_the_parse(tmp_path, small_budget, monkeypatch):
+    """Each batch is written on the scan's writer thread while the next
+    window is parsed (ADR 0112); the load still ends with every batch in
+    place and the dataset equal to the source."""
+    import threading
+    from ffast.io import frame_cache
+    from ffast.readers import indexed
+
+    small_budget.limit = 8 * 2**20
+    small_budget.parsed_limit = 2**30
+    small_budget.keep_free = 0
+    monkeypatch.setattr(frame_cache, "CACHE_DIR", tmp_path / "parsed")
+    threads, original = [], indexed._write_batch
+
+    def write(path, part, prefix=""):
+        threads.append(threading.current_thread().name)
+        return original(path, part, prefix)
+
+    monkeypatch.setattr(indexed, "_write_batch", write)
+    path = write_xyz(tmp_path / "writer.xyz", n=3000)
+    loaded = chunks.read_arrays(XyzReader, path, memory_mode="saving", workers=1)
+    store = loaded.arrays.store
+    windows = [r for r in store.ranges]
+    assert len(windows) > 2
+    assert sum(name.startswith("ffast-cache-write") for name in threads) == len(windows)
+    for a, b in windows:
+        assert store._cache_path(a, b).exists()
+    np.testing.assert_allclose(np.asarray(ReaderDataset(path, loaded, "xyz").F_flat),
+                               np.tile([.1, .2, .3], (3000 * 40, 1)))

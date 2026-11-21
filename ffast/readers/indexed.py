@@ -303,19 +303,26 @@ class IndexedStore:
             raise NoManifest(self.path)
         self._warming = True
         from ffast.readers.text import fast_threads
-        with ThreadPoolExecutor(max_workers=min(4, fast_threads())) as pool:
-            self._hash_pool = pool
-            for a, b in self.ranges:
-                from ffast.metrics.stop import check
+        try:
+            with ThreadPoolExecutor(max_workers=min(4, fast_threads())) as pool, \
+                    ThreadPoolExecutor(max_workers=1, thread_name_prefix="ffast-cache-write") as writing:
+                self._hash_pool = pool
+                # Batches are written beside the next parse, as in a scan.
+                self._writer, self._write = writing, None
+                for a, b in self.ranges:
+                    from ffast.metrics.stop import check
 
-                check()
-                self.check_source()
-                part = self._part(a, b)
-                self._observe(part, a, b)
-                self._remember_small(part, a, b)
-                self._observe_elements(part, a, b)
-                if progress:
-                    progress(b, len(self.counts))
+                    check()
+                    self.check_source()
+                    part = self._part(a, b)
+                    self._observe(part, a, b)
+                    self._remember_small(part, a, b)
+                    self._observe_elements(part, a, b)
+                    if progress:
+                        progress(b, len(self.counts))
+                self._wait_for_write()
+        finally:
+            self._writer, self._write = None, None
         del self._hash_pool
         self.check_source()
         for key, info in self.info.items():
@@ -404,8 +411,10 @@ class IndexedStore:
                 self._record = None
         try:
             with ThreadPoolExecutor(max_workers=min(4, text.fast_threads())) as hashes, \
-                    ThreadPoolExecutor(max_workers=1) as parsing:
+                    ThreadPoolExecutor(max_workers=1) as parsing, \
+                    ThreadPoolExecutor(max_workers=1, thread_name_prefix="ffast-cache-write") as writing:
                 self._hash_pool = hashes
+                self._writer, self._write = writing, None
 
                 def consume(starts, counts, end):
                     stop.check()
@@ -422,11 +431,7 @@ class IndexedStore:
                     self._observe(part, a, b)
                     self._remember_small(part, a, b)
                     self._observe_elements(part, a, b)
-                    if self._record is not None:
-                        if self._cache_path(a, b).exists():
-                            self._record.commit(self, a, b, end)
-                        else:
-                            self._record.abandon("a batch was not kept")
+                    self._commit_after_write(a, b, end)
                     if progress and callable(getattr(progress, "bytes_read", None)):
                         progress.bytes_read(min(int(end), self.state[2]), self.state[2], b)
 
@@ -445,7 +450,9 @@ class IndexedStore:
                     batch_bytes=min(128 * 2**20, max(1024, budget().limit // 16)))
                 if pending is not None:
                     pending.result()
+                self._wait_for_write()
             del self._hash_pool
+            self._writer = None
             self.check_source()
             if resume_at:
                 # The scan saw only the frames after the committed ones.
@@ -492,6 +499,9 @@ class IndexedStore:
                 self._record.abandon("the fast frame finder handed the file over")
             raise
         finally:
+            # The writer thread has ended (its pool's exit waits for it); a
+            # later save writes in line.
+            self._writer, self._write = None, None
             # Only half-written files go; committed batches stay (ADR 0107).
             if self.folder.exists():
                 for path in self.folder.glob(self.identity + "-*.tmp"):
@@ -962,26 +972,70 @@ class IndexedStore:
                 size = sum(v.nbytes for v in part.values()) + 4096 * len(part)
             if size > limit:
                 return
-            # Independent servers serialize eviction and publication through
-            # the cache's one space lock (ADR 0108).
-            with _disk_lock, cache_space.space_lock(self.folder.parent):
-                from ffast.io.result_array import sweep_stale_temporaries
-
-                sweep_stale_temporaries(self.folder)
-                # Other datasets give way, oldest last use first; pinned and
-                # open ones, and this one, are never trimmed.
-                if not cache_space.make_room(
-                        self.folder.parent, size, limit,
-                        saving=os.path.realpath(self.path), locked=True):
-                    return
-                # Written, flushed to disk, then renamed: a crash leaves a
-                # whole batch or none. The temporary name carries the
-                # identity so a stopped scan removes only its own.
-                _write_batch(self._cache_path(a, b), part, prefix=f"{self.identity}-")
         except OSError as exc:
-            log.debug(
-                "Parsed batch cache unavailable for %s: %s", self.path, exc
-            )
+            log.debug("Parsed batch cache unavailable for %s: %s", self.path, exc)
+            return
+
+        def write():
+            try:
+                # Independent servers serialize eviction and publication
+                # through the cache's one space lock (ADR 0108).
+                with _disk_lock, cache_space.space_lock(self.folder.parent):
+                    from ffast.io.result_array import sweep_stale_temporaries
+
+                    sweep_stale_temporaries(self.folder)
+                    # Other datasets give way, oldest last use first; pinned
+                    # and open ones, and this one, are never trimmed.
+                    if not cache_space.make_room(
+                            self.folder.parent, size, limit,
+                            saving=os.path.realpath(self.path), locked=True):
+                        return
+                    # Written, flushed to disk, then renamed: a crash leaves
+                    # a whole batch or none. The temporary name carries the
+                    # identity so a stopped scan removes only its own.
+                    _write_batch(self._cache_path(a, b), part, prefix=f"{self.identity}-")
+            except OSError as exc:
+                log.debug("Parsed batch cache unavailable for %s: %s", self.path, exc)
+
+        writer = getattr(self, "_writer", None)
+        if a >= 0 and writer is not None:
+            # A load writes each batch on its own thread while it parses the
+            # next one: writing 22 GB of forces in line made a load 26 s
+            # longer (ADR 0112). At most one write waits, so at most two
+            # windows are held for writing.
+            self._wait_for_write()
+            self._write = writer.submit(write)
+        else:
+            write()
+
+    def _wait_for_write(self):
+        """Wait for the batch a scan is writing, if any."""
+        future = getattr(self, "_write", None)
+        if future is not None:
+            future.result()
+            self._write = None
+
+    def _commit_after_write(self, a, b, end):
+        """Record window ``[a, b)`` as done once its batch is in place
+        (ADR 0107). The record is taken now, before the next window changes
+        the hashes; on the writer thread it is written after the batch."""
+        if self._record is None:
+            return
+        record, snapshot = self._record, self._record.snapshot(self)
+        path = self._cache_path(a, b)
+
+        def commit():
+            if path.exists():
+                record.commit(snapshot, a, b, end)
+            else:
+                record.abandon("a batch was not kept")
+
+        writer = getattr(self, "_writer", None)
+        if writer is None:
+            commit()
+        else:
+            # After this window's write: the writer runs its jobs in order.
+            self._write = writer.submit(commit)
 
     def _parse(self, a, b, path=None, reader=None):
         """Frames ``[a, b)`` parsed from the text of ``path`` (the source by
