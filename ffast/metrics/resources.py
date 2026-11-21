@@ -83,13 +83,25 @@ def _read_int(path: str) -> int | None:
     return int(text) if text.isdigit() else None
 
 
+# Finding this process's children makes psutil read every process under
+# /proc: 44 ms a call on a MeluXina node, before each group of a parse, was
+# 7.9 s of a 31 s parse of 48 GB (2026-11-21). An answer this recent is
+# reused; a group takes about 0.1 s and the parser's own estimate still
+# applies to what it allocates.
+HEADROOM_REUSE_S = 0.5
+_headroom_memo = None             # (when, allocation in MiB, answer)
+_clock = time.monotonic
+
+
 def slurm_headroom() -> int | None:
     """Fallback when a Slurm allocation's cgroup cannot be inspected.
 
     Slurm exports memory in MiB. Subtract this server's process tree; shared
     pages may be counted twice, which is conservative. A visible cgroup is
-    preferred because it also accounts for unrelated tasks in the job.
+    preferred because it also accounts for unrelated tasks in the job. An
+    answer younger than ``HEADROOM_REUSE_S`` for the same allocation is reused.
     """
+    global _headroom_memo
     try:
         amount = int(os.environ.get("SLURM_MEM_PER_NODE", "0"))
         if not amount:
@@ -98,17 +110,28 @@ def slurm_headroom() -> int | None:
             amount = int(os.environ.get("SLURM_MEM_PER_CPU", "0")) * cpus
         if amount <= 0:
             return None
-        import psutil
-        process = psutil.Process()
-        used = process.memory_info().rss
-        for child in process.children(recursive=True):
-            try:
-                used += child.memory_info().rss
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        return max(0, amount * _MIB - used)
+        now = _clock()
+        memo = _headroom_memo
+        if memo is not None and memo[1] == amount and 0 <= now - memo[0] < HEADROOM_REUSE_S:
+            return memo[2]
+        answer = _walk_headroom(amount)
+        _headroom_memo = (now, amount, answer)
+        return answer
     except (ValueError, OSError, ImportError):
         return None
+
+
+def _walk_headroom(amount: int) -> int:
+    """The allocation (MiB) minus this server's process tree, in bytes."""
+    import psutil
+    process = psutil.Process()
+    used = process.memory_info().rss
+    for child in process.children(recursive=True):
+        try:
+            used += child.memory_info().rss
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return max(0, amount * _MIB - used)
 
 
 def _inactive_file(path: str, key: str) -> int:
