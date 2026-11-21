@@ -282,10 +282,12 @@ def test_large_per_frame_summaries_spill_without_storing_delta(workspace, tmp_pa
         assert not isinstance(result, MetricFailure), result
         np.testing.assert_allclose(result.values, np.abs(pred - true).mean(), rtol=1e-12)
         assert reads == [len(true), len(true)]
-        # Only two O(frames) arrays: the much larger O(atoms x xyz) delta is absent.
+        # Only O(frames) arrays: structure MAE and RMSE, and the MAE of each
+        # structure's atoms of each element (one element here). The much
+        # larger O(atoms x xyz) delta is absent.
         files = list((tmp_path / "results").glob("*.npy"))
-        assert len(files) == 2
-        assert sum(p.stat().st_size for p in files) < 100000 * 16 + 8192
+        assert len(files) == 3
+        assert sum(p.stat().st_size for p in files) < 100000 * 24 + 3 * 4096
         assert workspace.used + workspace.cache_bytes <= workspace.limit
     finally:
         executor.shutdown()
@@ -793,5 +795,140 @@ def test_per_element_mae_distribution_reads_the_forces_once(workspace, frames):
         want = np.stack([kde(_per_structure_element_mae(fd, elements, offsets, z), "abs")
                          for z in np.unique(elements)])
         np.testing.assert_allclose(np.asarray(got.values), want, rtol=1e-9, atol=1e-12)
+    finally:
+        executor.shutdown()
+
+
+ATOMIC = [
+    "ffast.force_difference[element;component;mae]",
+    "ffast.force_difference[element;component;rmse]",
+    "ffast.force_mae_per_structure_per_element_kde",
+]
+
+
+def _with_elements(source, elements):
+    source.values["reference.elements"] = elements
+    return source
+
+
+def _atomic_inputs(frames, choices=(1, 6, 7, 8, 16)):
+    true, pred, offsets = inputs(frames)
+    elements = np.random.default_rng(7).choice(choices, size=len(true))
+    return true, pred, offsets, elements
+
+
+def _expected(name, true, pred, offsets, elements):
+    for z in ATOMIC[:2]:
+        default_registry.ensure(z)
+    baseline = InProcessExecutor(default_registry)
+    return baseline.run(name, _with_elements(Source(true, pred, offsets), elements), {})
+
+
+@pytest.mark.parametrize("frames", [250, 25_000])
+def test_atomic_errors_after_basic_errors_read_no_forces(workspace, frames, monkeypatch):
+    """The Basic Errors pass also sums the errors per element and keeps each
+    structure's MAE per element: the Atomic Errors table and distribution
+    after it read no forces. 25,000 structures keep the table in files."""
+    monkeypatch.setattr(type(workspace), "block_bytes", property(lambda self: 4096))
+    true, pred, offsets, elements = _atomic_inputs(frames)
+    executor = ServerExecutor(default_registry)
+    try:
+        reads = [0]
+        source = _with_elements(Source(_counted(true, reads), _counted(pred, reads), offsets), elements)
+        assert not isinstance(executor.run(METRICS[2], source, {}), MetricFailure)
+        assert reads == [2 * len(true)]
+        reads[0] = 0
+        for name in ATOMIC:
+            want = _expected(name, true, pred, offsets, elements)
+            got = executor.run(name, source, {})
+            assert not isinstance(got, MetricFailure), (name, got)
+            np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values),
+                                       rtol=1e-9, atol=1e-12, equal_nan=True)
+        assert reads == [0]
+    finally:
+        executor.shutdown()
+
+
+def test_atomic_errors_first_give_basic_errors_without_a_read(workspace):
+    true, pred, offsets, elements = _atomic_inputs(250)
+    executor = ServerExecutor(default_registry)
+    baseline = InProcessExecutor(default_registry)
+    try:
+        reads = [0]
+        source = _with_elements(Source(_counted(true, reads), _counted(pred, reads), offsets), elements)
+        assert not isinstance(executor.run(ATOMIC[2], source, {}), MetricFailure)
+        assert reads == [2 * len(true)]
+        reads[0] = 0
+        for name in METRICS[:5]:
+            got = executor.run(name, source, {})
+            want = baseline.run(name, Source(true, pred, offsets), {})
+            np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values),
+                                       rtol=1e-12, atol=1e-12, equal_nan=True)
+        assert reads == [0]
+    finally:
+        executor.shutdown()
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+def test_atomic_errors_with_bad_forces_match_regular_metrics(workspace, bad):
+    true, pred, offsets, elements = _atomic_inputs(250)
+    pred[2, 1] = bad
+    executor = ServerExecutor(default_registry)
+    try:
+        source = _with_elements(Source(_wrapped(true), _wrapped(pred), offsets), elements)
+        executor.run(METRICS[2], source, {})
+        for name in ATOMIC:
+            want = _expected(name, true, pred, offsets, elements)
+            got = executor.run(name, source, {})
+            assert isinstance(got, MetricFailure) == isinstance(want, MetricFailure), (name, got, want)
+            if not isinstance(got, MetricFailure):
+                np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values),
+                                           rtol=1e-9, atol=1e-12, equal_nan=True)
+    finally:
+        executor.shutdown()
+
+
+def test_many_elements_keep_sums_but_not_the_table(workspace):
+    """Past 32 elements each structure's per-element MAE is not kept; the
+    distribution makes its own pass and is still right."""
+    true, pred, offsets, elements = _atomic_inputs(250, choices=np.arange(1, 41))
+    executor = ServerExecutor(default_registry)
+    try:
+        reads = [0]
+        source = _with_elements(Source(_counted(true, reads), _counted(pred, reads), offsets), elements)
+        executor.run(METRICS[2], source, {})
+        reads[0] = 0
+        got = executor.run(ATOMIC[0], source, {})
+        assert reads == [0]
+        np.testing.assert_allclose(np.asarray(got.values),
+                                   np.asarray(_expected(ATOMIC[0], true, pred, offsets, elements).values),
+                                   rtol=1e-12)
+        got = executor.run(ATOMIC[2], source, {})
+        assert reads[0] >= 2 * len(true)
+        np.testing.assert_allclose(np.asarray(got.values),
+                                   np.asarray(_expected(ATOMIC[2], true, pred, offsets, elements).values),
+                                   rtol=1e-9, atol=1e-12)
+    finally:
+        executor.shutdown()
+
+
+def test_atomic_errors_are_not_taken_from_other_elements(workspace):
+    true, pred, offsets, elements = _atomic_inputs(250)
+    other = elements.copy()
+    other[::2] = 1
+
+    class Renamed(Source):
+        def identity(self, ref):
+            return super().identity(ref) + ("|other" if ref == "reference.elements" else "")
+
+    executor = ServerExecutor(default_registry)
+    try:
+        executor.run(METRICS[2], _with_elements(Source(_wrapped(true), _wrapped(pred), offsets), elements), {})
+        source = _with_elements(Renamed(_wrapped(true), _wrapped(pred), offsets), other)
+        for name in ATOMIC:
+            got = executor.run(name, source, {})
+            want = _expected(name, true, pred, offsets, other)
+            np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values),
+                                       rtol=1e-9, atol=1e-12)
     finally:
         executor.shutdown()

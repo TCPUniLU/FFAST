@@ -168,3 +168,35 @@ Errors went from 2.7-2.9 s to 2 ms with the same range; the summary pass took
 before. A summary is kept for at most two idle force pairs and may be evicted;
 then the colour pass reads the forces again. Forces given as plain in-memory
 arrays (not batched) never make a summary, so they gain nothing.
+
+## Amendment 2026-11-21: the summary pass also does the Atomic Errors work
+
+The Atomic Errors tab reads the same forces as Basic Errors: the per-element
+MAE and RMSE table (`force_difference[element;component;mae]` and
+`[...;rmse]`, exact built-in formulas only) and the per-element MAE
+distribution (`force_mae_per_structure_per_element_kde`). Each made its own
+pass, about 85 s on an 83 GB extxyz file whose forces are not in the parsed
+cache (7.09M structures, 463M atoms, 10 elements).
+
+The summary pass now also reads every atom's element, a batch at a time, and
+keeps:
+
+- per element, the sums of each atom's MAE and MSE and the atom count (three
+  numbers per element), which give the table;
+- each structure's MAE over its atoms of each element, one column per
+  element (NaN where a structure has none), which gives the distribution.
+  Small tables stay in memory; larger ones go to result files, 8 bytes per
+  structure and element (541 MB for the file above).
+
+Either tab first now runs the one pass for both. The elements are part of
+the group's key by their name; elements without a name are left out of the
+pass. The table of each structure is not kept above 32 elements (a batch's
+table would outgrow its workspace) or when result storage refuses it; the
+distribution then makes its own pass as before. An atom whose element is not
+in the dataset's list drops the per-element work for that pass.
+
+Cost, measured with a prototype of the same arithmetic on the 83 GB file:
+14 GB budget 59-63 s before, 61-63 s after (CPU 420 -> 449 s, +7%); 512 MB
+budget 375 s -> 395 s (+5%). The per-element sums run in another order than
+the formula's, so values may differ in the last bits (tests compare to 1e-9
+for the distribution, 1e-12 for the rest).

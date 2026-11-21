@@ -45,6 +45,17 @@ _COLOUR_EXPRESSIONS = {
     _BASE + "[atom+structure;component;rmse]": ("rmse", "sqrt(mean_parts(D ** 2))"),
     _BASE + "[atom+structure;length]": ("length", "norm(D)"),
 }
+# The Atomic Errors tab: the same pass sums each atom's error per element and
+# per (structure, element), so the per-element table and distribution read
+# no forces after the Basic Errors plots, and the reverse (2026-11-21).
+_ELEMENT_EXPRESSIONS = {
+    _BASE + "[element;component;mae]": ("element_mae", "mean(mean_parts(abs(D)), by=element)"),
+    _BASE + "[element;component;rmse]": ("element_rmse", "sqrt(mean(mean_parts(D ** 2), by=element))"),
+}
+_ELEMENT_KDE = "ffast.force_mae_per_structure_per_element_kde"
+# Above this many elements the (structure, element) table is not kept: a
+# batch's table would outgrow its workspace. The KDE then runs on its own.
+_TABLE_ELEMENTS = 32
 
 
 def colour_role(metric_id, fn):
@@ -72,6 +83,14 @@ def role(metric_id, fn):
         if (fn.expr == expression and fn.var_refs == refs and not fn.gap_inputs
                 and fn.var_parts == {"D": 1}):
             return name
+    if metric_id in _ELEMENT_EXPRESSIONS:
+        from ffast.metrics.expr import _ExprFn
+        name, expression = _ELEMENT_EXPRESSIONS[metric_id]
+        if (type(fn) is _ExprFn and fn.expr == expression
+                and fn.var_refs == {"D": _BASE, "_elements": "reference.elements"}
+                and not fn.gap_inputs and fn.var_parts == {"D": 1}):
+            return name
+        return None
     # Looking for an optional optimization must not register built-ins in a
     # different/global registry used by an unrelated headless caller.
     f = sys.modules.get("ffast.metrics.builtin.force_metrics")
@@ -81,6 +100,9 @@ def role(metric_id, fn):
         return "outliers"
     if metric_id == "ffast.force_parity_density" and fn is f.force_parity_density:
         return "density"
+    a = sys.modules.get("ffast.metrics.builtin.atomic_metrics")
+    if metric_id == _ELEMENT_KDE and a is not None and fn is a.force_mae_per_structure_per_element_kde:
+        return "element_kde"
     return None
 
 
@@ -188,9 +210,34 @@ class _Partial:
     true: np.ndarray
     predicted: np.ndarray
     atom_ranges: np.ndarray   # (lowest, highest) of each atom's MAE, MSE, squared length
+    # Per element: sums of each atom's MAE and MSE, and the atom count, or None
+    # when an atom's element is not in the dataset's list (never expected).
+    element_sums: np.ndarray | None = None
+    # Each structure's MAE per element (NaN where it has none of that element).
+    element_table: np.ndarray | None = None
 
 
-def _summary_batch(batch, reference, predicted, offsets):
+def _element_batch(a, b, start, end, elements, columns, table, absolute, atom_abs, atom_sq, sizes):
+    z = np.asarray(elements[start:end])
+    width = len(columns)
+    slot = np.searchsorted(columns, z)
+    if (len(z) != end - start or (slot >= width).any()
+            or (columns[np.minimum(slot, width - 1)] != z).any()):
+        return None, None
+    sums = np.stack((np.bincount(slot, atom_abs, width), np.bincount(slot, atom_sq, width),
+                     np.bincount(slot, None, width)))
+    if not table:
+        return sums, None
+    # The same arithmetic as the per-element distribution's own pass.
+    frames = b - a
+    cell = np.repeat(np.arange(frames), sizes) * width + slot
+    total = np.bincount(cell, absolute.sum(axis=1), frames * width).reshape(frames, width)
+    count = np.bincount(cell, None, frames * width).reshape(frames, width)
+    with np.errstate(all="ignore"):
+        return sums, total / (3 * count)
+
+
+def _summary_batch(batch, reference, predicted, offsets, elements=None, columns=None, table=False):
     a, b, start, end = batch
     t, p = _read_pair(reference, predicted, start, end)
     with np.errstate(all="ignore"):
@@ -216,13 +263,18 @@ def _summary_batch(batch, reference, predicted, offsets):
         atom_ranges = np.array([[v.min(), v.max()] for v in (atom_abs, atom_sq, atom_ss)])
     else:
         atom_ranges = np.full((3, 2), [np.inf, -np.inf])
+    element_sums = element_table = None
+    if columns is not None:
+        element_sums, element_table = _element_batch(
+            a, b, start, end, elements, columns, table, absolute, atom_abs, atom_sq, sizes)
     flat = absolute.ravel()
     selected = np.flatnonzero(np.isfinite(flat))
     if len(selected) > K:
         selected = selected[np.argpartition(-flat[selected], K - 1)[:K]]
     return _Partial(a, b, end - start, atom_abs.sum(), atom_sq.sum(),
                     frame_abs, frame_rms, bad, lo, hi, selected + 3 * start,
-                    flat[selected], t.ravel()[selected], p.ravel()[selected], atom_ranges)
+                    flat[selected], t.ravel()[selected], p.ravel()[selected], atom_ranges,
+                    element_sums, element_table)
 
 
 @dataclass
@@ -240,13 +292,62 @@ class Summary:
     # {"mae" | "rmse" | "length": (lowest, highest)} over every atom, or None
     # when an atom's error is not finite: the colour pass decides then.
     atom_ranges: dict | None = None
+    # The dataset's elements in order of atomic number, and per element the
+    # force MAE and RMSE over its atoms; None without the elements.
+    element_columns: np.ndarray | None = None
+    element_mae: np.ndarray | None = None
+    element_rmse: np.ndarray | None = None
+    # One column per element: each structure's MAE over its atoms of that
+    # element (NaN without one). None when it was not kept.
+    element_table: list | None = None
 
 
-def scan(reference, predicted, offsets):
-    """One pass, complete frames and bounded workspaces; check cancellation."""
+def _table_storage(owner, n, width):
+    """``("memory", array)``, ``("files", writers)`` or None: where each
+    structure's per-element MAE goes. None leaves it to its own pass."""
+    size = n * width * 8
+    if size <= min(128 * 2**20, owner.limit // 8) and (size <= owner.block_bytes or owner.result_limit == 0):
+        try:
+            with owner.reserve(size) as lease:
+                return "memory", owner.retain(np.full((n, width), np.nan), lease)
+        except NotEnoughMemory:
+            return None
+    writers = []
+    try:
+        for _ in range(width):
+            writers.append(ResultWriter((n,), float))
+    except NotEnoughMemory:
+        for writer in writers:
+            writer.abort()
+        return None
+    except BaseException:
+        for writer in writers:
+            writer.abort()
+        raise
+    return "files", writers
+
+
+def _drop_table(table):
+    if table is not None and table[0] == "files":
+        for writer in table[1]:
+            writer.abort()
+
+
+def scan(reference, predicted, offsets, elements=None):
+    """One pass, complete frames and bounded workspaces; check cancellation.
+    With ``elements`` (every atom's atomic number) it also sums the errors
+    per element and keeps each structure's MAE per element."""
     owner = budget()
     n = len(offsets) - 1
     writers = []
+    columns = table = None
+    if elements is not None:
+        columns = np.asarray(np.unique(elements))
+        if columns.size == 0:
+            columns = None
+        elif columns.size <= _TABLE_ELEMENTS:
+            table = _table_storage(owner, n, columns.size)
+    element_sums = None if columns is None else np.zeros((3, columns.size))
     # Preserve downstream streaming for large frame series, just as the
     # expression evaluator does. Small arrays (or admitted disk-free results)
     # stay resident; the two O(frames) arrays otherwise own ordinary result files.
@@ -277,7 +378,8 @@ def scan(reference, predicted, offsets):
         # Multiple temporaries and top-k indices fit the producer's reserved
         # workspace; batches never split an individual structure.
         target = max(1, owner.block_bytes // 48)
-        fn = lambda batch: _summary_batch(batch, reference, predicted, offsets)
+        fn = lambda batch: _summary_batch(batch, reference, predicted, offsets,
+                                          elements, columns, table is not None)
         with closing(_map_batches(fn, _batches(offsets, target))) as partials:
             for part in partials:
                 stop.check()
@@ -296,6 +398,19 @@ def scan(reference, predicted, offsets):
                 # np.minimum keeps a NaN, so a non-finite atom is seen below.
                 atom_lo = np.minimum(atom_lo, part.atom_ranges[:, 0])
                 atom_hi = np.maximum(atom_hi, part.atom_ranges[:, 1])
+                if element_sums is not None:
+                    if part.element_sums is None:
+                        element_sums = None
+                        _drop_table(table)
+                        table = None
+                    else:
+                        element_sums += part.element_sums
+                if table is not None:
+                    if table[0] == "memory":
+                        table[1][part.first:part.last] = part.element_table
+                    else:
+                        for column, writer in enumerate(table[1]):
+                            writer.append(np.ascontiguousarray(part.element_table[:, column]))
                 indices = np.concatenate((indices, part.indices))
                 errors = np.concatenate((errors, part.errors))
                 true_values = np.concatenate((true_values, part.true))
@@ -336,14 +451,31 @@ def scan(reference, predicted, offsets):
                 "rmse": (float(np.sqrt(atom_lo[1])), float(np.sqrt(atom_hi[1]))),
                 "length": (float(np.sqrt(atom_lo[2])), float(np.sqrt(atom_hi[2]))),
             }
+        element_mae = element_rmse = element_table = None
+        if element_sums is not None:
+            with np.errstate(all="ignore"):
+                element_mae = element_sums[0] / element_sums[2]
+                element_rmse = np.sqrt(element_sums[1] / element_sums[2])
+            element_mae.flags.writeable = element_rmse.flags.writeable = False
+            if table is not None:
+                if table[0] == "memory":
+                    table[1].flags.writeable = False
+                    element_table = [table[1][:, j] for j in range(len(columns))]
+                else:
+                    element_table = [writer.finish() for writer in table[1]]
+                table = None
+        else:
+            columns = None
         result = Summary(mae, rmse, frame_mae, frame_rmse, outliers, (lo, hi),
-                         tuple(bad_frames), batches, count, _width.get(), atom_ranges)
+                         tuple(bad_frames), batches, count, _width.get(), atom_ranges,
+                         columns, element_mae, element_rmse, element_table)
         log.info("force_batch_scan: summary, %d batches, %d atoms, %d lanes, one difference per batch",
                  batches, count, _width.get())
         return result
     except BaseException:
         for writer in writers:
             writer.abort()
+        _drop_table(table)
         raise
 
 
@@ -415,7 +547,8 @@ class _Group:
         width_token = _width.set(_parallelism())
         try:
             with self.workspace(callback, blocks=10 * _width.get()):
-                value = (scan(lease.reference, lease.predicted, self.offsets) if phase == "summary"
+                value = (scan(lease.reference, lease.predicted, self.offsets, lease.elements())
+                         if phase == "summary"
                          else histogram(lease.reference, lease.predicted, self.offsets,
                                         self.results["summary"].extent))
             with self.condition:
@@ -441,10 +574,14 @@ class _Group:
 
 
 class Lease:
-    def __init__(self, manager, key, group, reference, predicted, stopped, roles):
+    def __init__(self, manager, key, group, reference, predicted, stopped, roles,
+                 elements=lambda: None):
         self.manager, self.key, self.group = manager, key, group
         self.reference, self.predicted, self.stopped = reference, predicted, stopped
         self.roles = roles
+        # Called only by the pass itself: resolving every atom's element may
+        # build an array, so a lease answered by a finished pass never does.
+        self.elements = elements
 
     def select(self, metric_id, fn):
         name = role(metric_id, fn)
@@ -462,11 +599,30 @@ class Lease:
             return NOT_HANDLED
         if name == "density":
             return self.group.get("histogram", self)
+        if name.startswith("element_"):
+            return self._element(name, fn, result)
         value = getattr(result, name)
         if name in ("mae", "rmse", "frame_mae", "frame_rmse"):
             bad = (result.bad_frames[name == "frame_rmse"] if name.startswith("frame_")
                    else result.atoms > 0 and not np.isfinite(value).all())
             if bad:
+                raise ValueError(f"expr {fn.expr!r} produced non-finite values (inf/nan) — "
+                                 "check for division by zero or log of a non-positive value in the data")
+        if self.stopped():
+            raise stop.Stopped(stop.STOPPED)
+        return value
+
+    def _element(self, name, fn, result):
+        if result.element_mae is None:
+            return NOT_HANDLED
+        if name == "element_kde":
+            if result.element_table is None:
+                return NOT_HANDLED
+            from ffast.metrics.streaming import kde
+            value = np.stack([kde(column, "abs") for column in result.element_table])
+        else:
+            value = getattr(result, name)
+            if not np.isfinite(value).all():
                 raise ValueError(f"expr {fn.expr!r} produced non-finite values (inf/nan) — "
                                  "check for division by zero or log of a non-positive value in the data")
         if self.stopped():
@@ -516,6 +672,21 @@ class FrameMAE:
                             {"frame_mae": frame_mae, "mae": mae})
 
 
+def _elements_of(source, root, atoms):
+    """Every atom's atomic number from ``source``, or None when it has none
+    that fits the forces."""
+    for local in ("_elements", "elements"):
+        found, value = source.get(root, local, "reference.elements")
+        if found and value is not None:
+            break
+    else:
+        return None
+    if (getattr(value, "shape", None) != (atoms,)
+            or not np.issubdtype(np.dtype(value.dtype), np.integer)):
+        return None
+    return value
+
+
 class ForceScans:
     """At most two idle summaries; live consumers share cancellation/lifetime."""
 
@@ -534,9 +705,12 @@ class ForceScans:
         if found is None:
             return None
         key, offsets, reference, predicted = found
+        root = plan.root_ids[0]
+        elements = ((lambda: _elements_of(source, root, len(reference)))
+                    if key[-1] is not None else (lambda: None))
         with self.lock:
             group = self._group(key, offsets, source)
-            lease = Lease(self, key, group, reference, predicted, source.stopped, roles)
+            lease = Lease(self, key, group, reference, predicted, source.stopped, roles, elements)
             with group.condition:
                 group.members[id(lease)] = lease
                 group.uses.update(source.uses())
@@ -650,7 +824,10 @@ class ForceScans:
         identity = source.identity("offsets")
         if identity is None:
             identity = hashlib.sha256(offsets.tobytes()).hexdigest()
-        key = (r.identity, p.identity, reference.shape, identity, registry.revision)
+        # The elements are named here, not read: the pass reads them a batch
+        # at a time. Unnamed elements are left out of the pass.
+        key = (r.identity, p.identity, reference.shape, identity, registry.revision,
+               source.identity("reference.elements"))
         return key, offsets, reference, predicted
 
     def release(self, lease):
