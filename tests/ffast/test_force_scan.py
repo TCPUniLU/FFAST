@@ -1052,3 +1052,17 @@ def test_element_colouring_with_bad_forces_behaves_as_without_the_plots(workspac
     finally:
         fresh.shutdown()
         executor.shutdown()
+
+
+def test_element_lookup_finds_each_atoms_column_or_refuses():
+    from ffast.metrics.force_scan import _slots
+
+    columns = np.array([1, 6, 8])
+    np.testing.assert_array_equal(_slots(np.array([8, 1, 6, 1]), columns), [2, 0, 1, 0])
+    assert _slots(np.array([1, 7]), columns) is None      # inside the range, not a column
+    assert _slots(np.array([0, 1]), columns) is None      # below
+    assert _slots(np.array([1, 9]), columns) is None      # above
+    assert _slots(np.zeros(0, dtype=int), columns).size == 0
+    wide = np.array([1, 100_000])                         # too wide for a table: search
+    np.testing.assert_array_equal(_slots(np.array([100_000, 1]), wide), [1, 0])
+    assert _slots(np.array([5]), wide) is None

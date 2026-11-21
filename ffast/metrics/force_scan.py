@@ -221,24 +221,47 @@ class _Partial:
     net: np.ndarray | None = None
 
 
-def _element_batch(a, b, start, end, elements, columns, table, absolute, atom_abs, atom_sq, sizes):
+def _slots(z, columns):
+    """Each atom's column in ``columns`` (sorted atomic numbers), or None when
+    an atom's element is not among them. A lookup table, not a search: the
+    search took 35 of 91 ms per 2M atoms (2026-11-21)."""
+    if not len(z):
+        return np.zeros(0, dtype=np.intp)
+    low, high = int(z.min()), int(z.max())
+    if low < columns[0] or high > columns[-1]:
+        return None
+    if columns[-1] - columns[0] <= 4096:
+        lookup = np.full(int(columns[-1] - columns[0]) + 1, -1, dtype=np.intp)
+        lookup[columns - columns[0]] = np.arange(len(columns))
+        slot = lookup[z - columns[0]]
+        return None if (slot < 0).any() else slot
+    slot = np.searchsorted(columns, z)
+    return None if (columns[np.minimum(slot, len(columns) - 1)] != z).any() else slot
+
+
+def _element_batch(a, b, start, end, elements, columns, table, atom_abs, atom_sq, sizes):
+    """Per element: sums of each atom's MAE and MSE and the atom count, and
+    with ``table`` each structure's MAE per element; None, None when an
+    atom's element is not in ``columns``."""
     z = np.asarray(elements[start:end])
     width = len(columns)
-    slot = np.searchsorted(columns, z)
-    if (len(z) != end - start or (slot >= width).any()
-            or (columns[np.minimum(slot, width - 1)] != z).any()):
+    slot = None if len(z) != end - start else _slots(z, columns)
+    if slot is None:
         return None, None
-    sums = np.stack((np.bincount(slot, atom_abs, width), np.bincount(slot, atom_sq, width),
-                     np.bincount(slot, None, width)))
     if not table:
-        return sums, None
-    # The same arithmetic as the per-element distribution's own pass.
+        return np.stack((np.bincount(slot, atom_abs, width), np.bincount(slot, atom_sq, width),
+                         np.bincount(slot, None, width))), None
+    # One group per (structure, element); the element sums are the table's
+    # column sums, so the atoms are grouped once, not twice.
     frames = b - a
     cell = np.repeat(np.arange(frames), sizes) * width + slot
-    total = np.bincount(cell, absolute.sum(axis=1), frames * width).reshape(frames, width)
-    count = np.bincount(cell, None, frames * width).reshape(frames, width)
+    shape = (frames, width)
+    total = np.bincount(cell, atom_abs, frames * width).reshape(shape)
+    squares = np.bincount(cell, atom_sq, frames * width).reshape(shape)
+    count = np.bincount(cell, None, frames * width).reshape(shape)
+    sums = np.stack((total.sum(axis=0), squares.sum(axis=0), count.sum(axis=0)))
     with np.errstate(all="ignore"):
-        return sums, total / (3 * count)
+        return sums, total / count
 
 
 def _summary_batch(batch, reference, predicted, offsets, elements=None, columns=None, table=False):
@@ -272,7 +295,7 @@ def _summary_batch(batch, reference, predicted, offsets, elements=None, columns=
     element_sums = element_table = None
     if columns is not None:
         element_sums, element_table = _element_batch(
-            a, b, start, end, elements, columns, table, absolute, atom_abs, atom_sq, sizes)
+            a, b, start, end, elements, columns, table, atom_abs, atom_sq, sizes)
     flat = absolute.ravel()
     selected = np.flatnonzero(np.isfinite(flat))
     if len(selected) > K:
