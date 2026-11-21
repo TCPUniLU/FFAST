@@ -219,6 +219,140 @@ class _Partial:
     element_table: np.ndarray | None = None
     # Each structure's net force error: the sum of its atoms' errors (x, y, z).
     net: np.ndarray | None = None
+    # The force parity counts on a fine grid, a ``_Fine``, or None.
+    parity: object = None
+
+
+# ── Parity counts in the summary pass ─────────────────────────────────────────
+# The parity density bins every component between the lowest and highest
+# value, which are known only after every force was read: it took a second
+# full pass (63 s of 126 s for Basic Errors on an 83 GB file, 2026-11-21).
+# The summary pass instead counts each (true, predicted) pair on a fine grid
+# whose bins are a power of two wide, at fixed places: bin i holds
+# [i w, (i + 1) w). Doubling w merges bins 2i and 2i + 1 exactly, so the grid
+# widens with the data and no count is lost or moved. At the end whole fine
+# bins are added into plot bins, so every count is exact; the plot's edges
+# are fine-bin edges, not the exact lowest and highest value.
+_FINE = 1200
+
+
+@dataclass
+class _Fine:
+    width: float          # a power of two
+    start: int            # absolute index of row/column 0
+    low: int              # lowest and highest occupied absolute index
+    high: int
+    counts: np.ndarray    # (_FINE, _FINE) int64, [predicted bin][true bin]
+
+
+def _fine_width(lo, hi, at_least=0.0):
+    """The smallest power of two, at least ``at_least``, whose grid holds
+    [lo, hi] in ``_FINE - 1`` bins, or None for values too large to bin."""
+    scale = max(abs(lo), abs(hi))
+    if not np.isfinite(hi - lo) or not np.isfinite(scale):
+        return None
+    # x / w must stay far inside int64, and w must be a normal number.
+    floor = max(scale * 2.0 ** -40, 2.0 ** -1000)
+    wanted = max((hi - lo) / (_FINE - 2), floor, at_least)
+    width = 2.0 ** int(np.ceil(np.log2(wanted)))
+    while np.floor(hi / width) - np.floor(lo / width) + 1 > _FINE - 1:
+        width *= 2
+    return width
+
+
+def _fine_batch(t, p, lo, hi, state):
+    """The finite pairs of one batch counted on a fine grid: the merged
+    grid's own when they fit it (``state`` holds its width and start), else
+    one of their own."""
+    if not np.isfinite(lo):
+        return None
+    shared = state.get("grid")
+    width = start = None
+    if shared is not None:
+        w, s = shared
+        if np.floor(lo / w) >= s and np.floor(hi / w) < s + _FINE:
+            width, start = w, s
+    if width is None:
+        width = _fine_width(lo, hi, shared[0] if shared is not None else 0.0)
+        if width is None:
+            return None
+        start = int(np.floor(lo / width))
+    keep = np.isfinite(t) & np.isfinite(p)
+    col = np.floor(t[keep] / width).astype(np.int64) - start
+    row = np.floor(p[keep] / width).astype(np.int64) - start
+    counts = np.bincount(row * _FINE + col, minlength=_FINE * _FINE).reshape(_FINE, _FINE)
+    return _Fine(width, start, int(np.floor(lo / width)), int(np.floor(hi / width)), counts)
+
+
+def _regroup(fine, groups, size):
+    """``fine.counts`` with row and column i added into ``groups[i]`` of a
+    ``size`` x ``size`` grid. ``groups`` does not decrease; groups outside
+    [0, size) hold no counts."""
+    inside = (groups >= 0) & (groups < size)
+    index = np.flatnonzero(inside)
+    out = np.zeros((size, size), dtype=fine.counts.dtype)
+    if not index.size:
+        return out
+    target = groups[index]
+    starts = np.flatnonzero(np.r_[True, np.diff(target) != 0])
+    block = fine.counts[np.ix_(index, index)]
+    block = np.add.reduceat(np.add.reduceat(block, starts, axis=0), starts, axis=1)
+    out[np.ix_(target[starts], target[starts])] = block
+    return out
+
+
+def _coarsen(fine, width, start):
+    """``fine`` on the grid of ``width`` (a power of two, not finer) starting
+    at absolute index ``start``."""
+    factor = int(round(width / fine.width))
+    groups = (fine.start + np.arange(_FINE)) // factor - start
+    return _regroup(fine, groups, _FINE)
+
+
+def _merge_fine(total, part, state):
+    """``total`` and ``part`` counted together, exactly, on one grid."""
+    if part is None:
+        return total
+    if total is None:
+        state["grid"] = (part.width, part.start)
+        return part
+    if part.width == total.width and part.start == total.start:
+        total.counts += part.counts
+        total.low, total.high = min(total.low, part.low), max(total.high, part.high)
+        return total
+    width = max(total.width, part.width)
+    while True:
+        low = min(v.low // int(round(width / v.width)) for v in (total, part))
+        high = max(v.high // int(round(width / v.width)) for v in (total, part))
+        if high - low + 1 <= _FINE:
+            break
+        width *= 2
+    # Centre the occupied bins, so later batches fit without regrouping.
+    start = low - (_FINE - (high - low + 1)) // 2
+    counts = _coarsen(total, width, start) + _coarsen(part, width, start)
+    state["grid"] = (width, start)
+    return _Fine(width, start, low, high, counts)
+
+
+def parity_from_fine(fine, bins=300):
+    """The parity density (``histogram``'s layout: row 0 the bin centres,
+    then counts [predicted bin][true bin]) from fine counts, exactly. Each
+    plot bin is a whole number of fine bins, so its edges are fine-bin
+    edges: the plot reaches past the lowest and highest value by less than
+    one fine bin, and has ``bins`` to ``2 * bins - 1`` bins."""
+    span = fine.high - fine.low + 1
+    if span >= bins:
+        merge = span // bins
+        first, count = fine.low, -(-span // merge)
+    else:
+        # Too few occupied fine bins (all values nearly equal): one fine bin
+        # per plot bin, the empty ones shared out on both sides.
+        merge, first, count = 1, fine.low - (bins - span) // 2, bins
+    groups = (fine.start + np.arange(_FINE) - first) // merge
+    counts = _regroup(fine, groups, count)
+    width = merge * fine.width
+    centres = (first + np.arange(count) * merge) * fine.width + width / 2
+    return budget().retain(np.vstack((centres, counts)))
 
 
 def _slots(z, columns):
@@ -264,7 +398,8 @@ def _element_batch(a, b, start, end, elements, columns, table, atom_abs, atom_sq
         return sums, total / count
 
 
-def _summary_batch(batch, reference, predicted, offsets, elements=None, columns=None, table=False):
+def _summary_batch(batch, reference, predicted, offsets, elements=None, columns=None, table=False,
+                   parity=None):
     a, b, start, end = batch
     t, p = _read_pair(reference, predicted, start, end)
     with np.errstate(all="ignore"):
@@ -288,6 +423,7 @@ def _summary_batch(batch, reference, predicted, offsets, elements=None, columns=
     if finite_pair.any():
         lo = min(t[finite_pair].min(), p[finite_pair].min())
         hi = max(t[finite_pair].max(), p[finite_pair].max())
+    fine = None if parity is None else _fine_batch(t, p, lo, hi, parity)
     if len(atom_abs):
         atom_ranges = np.array([[v.min(), v.max()] for v in (atom_abs, atom_sq, atom_ss)])
     else:
@@ -303,7 +439,7 @@ def _summary_batch(batch, reference, predicted, offsets, elements=None, columns=
     return _Partial(a, b, end - start, atom_abs.sum(), atom_sq.sum(),
                     frame_abs, frame_rms, bad, lo, hi, selected + 3 * start,
                     flat[selected], t.ravel()[selected], p.ravel()[selected], atom_ranges,
-                    element_sums, element_table, net)
+                    element_sums, element_table, net, fine)
 
 
 @dataclass
@@ -332,6 +468,9 @@ class Summary:
     # Each structure's net force error (structures x 3), the value of
     # force_net_residual; None when storage refused it.
     net: np.ndarray | None = None
+    # The force parity density counted in this pass (``histogram``'s layout,
+    # fine bins regrouped by their centre); None leaves it to a second pass.
+    density: np.ndarray | None = None
 
 
 def _in_memory(owner, size):
@@ -431,8 +570,12 @@ def scan(reference, predicted, offsets, elements=None):
         # Multiple temporaries and top-k indices fit the producer's reserved
         # workspace; batches never split an individual structure.
         target = max(1, owner.block_bytes // 48)
+        # The merged parity grid's width and start, for the lanes to bin on.
+        parity_state = {}
+        fine = None
+        fine_ok = True
         fn = lambda batch: _summary_batch(batch, reference, predicted, offsets,
-                                          elements, columns, table is not None)
+                                          elements, columns, table is not None, parity_state)
         with closing(_map_batches(fn, _batches(offsets, target))) as partials:
             for part in partials:
                 stop.check()
@@ -448,6 +591,13 @@ def scan(reference, predicted, offsets, elements=None):
                     writers[1].append(part.frame_rms)
                 count += part.atoms
                 lo, hi = min(lo, part.lo), max(hi, part.hi)
+                if fine_ok:
+                    if part.parity is None and np.isfinite(part.lo):
+                        # Values too large to bin: the density makes its own pass.
+                        fine_ok, fine = False, None
+                    else:
+                        fine = _merge_fine(fine, part.parity, parity_state)
+                part.parity = None
                 # np.minimum keeps a NaN, so a non-finite atom is seen below.
                 atom_lo = np.minimum(atom_lo, part.atom_ranges[:, 0])
                 atom_hi = np.maximum(atom_hi, part.atom_ranges[:, 1])
@@ -496,6 +646,11 @@ def scan(reference, predicted, offsets, elements=None):
             lo, hi = 0.0, 1.0
         if hi <= lo:
             hi = lo + 1.0
+        # The fine grid (11.5 MB) is not kept: only the plot's 300 x 300.
+        density = None if fine is None else parity_from_fine(fine)
+        fine = None
+        if density is not None:
+            density.flags.writeable = False
         with np.errstate(all="ignore"):
             mae = np.asarray(absolute_sum / count if count else np.nan)
             rmse = np.asarray(np.sqrt(squared_sum / count) if count else np.nan)
@@ -534,7 +689,7 @@ def scan(reference, predicted, offsets, elements=None):
             net = None
         result = Summary(mae, rmse, frame_mae, frame_rmse, outliers, (lo, hi),
                          tuple(bad_frames), batches, count, _width.get(), atom_ranges,
-                         columns, element_mae, element_rmse, element_table, net_values)
+                         columns, element_mae, element_rmse, element_table, net_values, density)
         log.info("force_batch_scan: summary, %d batches, %d atoms, %d lanes, one difference per batch",
                  batches, count, _width.get())
         return result
@@ -665,6 +820,10 @@ class Lease:
         if result is NOT_HANDLED:
             return NOT_HANDLED
         if name == "density":
+            if result.density is not None:
+                if self.stopped():
+                    raise stop.Stopped(stop.STOPPED)
+                return result.density
             return self.group.get("histogram", self)
         if name.startswith("element_"):
             return self._element(name, fn, result)

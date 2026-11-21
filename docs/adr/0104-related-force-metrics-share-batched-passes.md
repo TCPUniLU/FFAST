@@ -223,3 +223,35 @@ net force error and MAE per element) stay in RAM only up to 1/16 of a
 memory block; larger ones go to result files, so they never take the RAM
 the pass and the plots need. On the 83 GB file the net force errors take
 170 MB of disk (7.09M structures x 3 x 8 bytes).
+
+## Amendment 2026-11-21 (parity): the parity density is counted in the summary pass
+
+The parity density bins every force component between the lowest and
+highest value, known only after the whole pass; it took a second full pass.
+On the 83 GB extxyz file (forces not in the parsed cache) that second pass
+took 63 s of the 126 s Basic Errors cost.
+
+The summary pass now counts each (true, predicted) pair on a fine
+1200 x 1200 grid whose bins are a power of two wide at fixed places
+(bin i holds [i w, (i + 1) w)). When values fall outside the grid, the width
+doubles: bins 2i and 2i + 1 merge exactly, so no count is lost or moved.
+Lanes bin on the merged grid's width when their values fit it, else on their
+own, and the merging thread brings both to the wider one. The occupied span
+stays between 600 and 1200 fine bins. At the end whole fine bins are added
+into plot bins (`merge` = occupied span // 300 fine bins each), so every
+count is exact, and only the plot's counts are kept.
+
+**What changed in the plot:** the counts stay exact, but the bin edges are
+fine-bin edges instead of the exact lowest and highest value. The plot
+reaches past them by less than one plot bin, and has 300 to 599 bins per
+axis instead of always 300 (the client reads the count from the bin
+centres). A first version gave each fine bin to the plot bin holding its
+centre, keeping 300 bins over [lowest, highest]; pairs near a plot edge
+could then be counted one bin over. It was rejected for that inexactness.
+Tests compare every bin with an exact count over the density's own edges.
+Values too large to bin (a range that is not finite) and data with no
+finite pair still use the second pass.
+
+Measured on the 83 GB file (14 GB budget): the density after the pass
+0.01 s (before 63.5 s); the summary pass 69.6 s (before 62.4 s; the fine
+counts take 25 lane-seconds). Basic Errors in total: about 74 s, before 126 s.

@@ -163,7 +163,10 @@ def test_dashboard_metrics_share_bounded_workspaces(tmp_path, small_budget):
         np.testing.assert_allclose(results[5].values, 0.1)
         np.testing.assert_allclose(results[6].values, 0.1)
         assert results[2].values.shape == (301, 300)
-        assert results[9].values.shape == (301, 300)
+        # The force density is counted in the summary pass, exactly, on bin
+        # edges of its fine grid: 300 to 599 bins (ADR 0104, 2026-11-21).
+        bins = results[9].values.shape[1]
+        assert 300 <= bins < 600 and results[9].values.shape == (bins + 1, bins)
         assert (
             small_budget.used + small_budget.cache_bytes <= small_budget.limit
         )

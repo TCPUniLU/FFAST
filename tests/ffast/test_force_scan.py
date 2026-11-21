@@ -53,7 +53,9 @@ class Source(InputSource):
 def workspace(monkeypatch, tmp_path):
     from ffast.metrics import resources as execution_resources
 
-    owner = resources.Budget(ram_bytes=8 * 2**20, parsed_bytes=0,
+    # 12 MiB: the exact parity density counted in the summary pass keeps up
+    # to 450 x 450 counts (1.6 MiB, was 300 x 300); 8 MiB left no room.
+    owner = resources.Budget(ram_bytes=12 * 2**20, parsed_bytes=0,
                              result_bytes=8 * 2**20)
     monkeypatch.setattr(resources, "_budget", owner)
     # CPU availability is varied by these tests; do not reuse a pool built
@@ -73,6 +75,38 @@ def inputs(n=250):
     true = np.random.default_rng(42).normal(size=(offsets[-1], 3))
     pred = true + (1 + np.arange(true.size).reshape(true.shape) / (true.size + 1))
     return true, pred, offsets
+
+
+DENSITY = "ffast.force_parity_density"
+
+
+def assert_density_exact(got, true, pred):
+    """Every finite (true, predicted) pair counted in its own bin of the
+    density's grid, exactly; the grid covers every pair, reaching past the
+    lowest and highest value by less than one bin, with 300 to 599 bins."""
+    got = np.asarray(got)
+    centres, counts = got[0], got[1:]
+    bins = len(centres)
+    assert 300 <= bins < 600 and counts.shape == (bins, bins)
+    width = centres[1] - centres[0]
+    edges = np.append(centres - width / 2, centres[-1] + width / 2)
+    t, p = np.asarray(true, dtype=float).ravel(), np.asarray(pred, dtype=float).ravel()
+    keep = np.isfinite(t) & np.isfinite(p)
+    t, p = t[keep], p[keep]
+    want, _, _ = np.histogram2d(p, t, bins=[edges, edges])
+    np.testing.assert_array_equal(counts, want)
+    if t.size and np.ptp(np.r_[t, p]) > 0:
+        lo, hi = min(t.min(), p.min()), max(t.max(), p.max())
+        assert edges[0] <= lo and edges[-1] > hi
+        assert lo - edges[0] < width and edges[-1] - hi <= width
+
+
+def assert_metric_close(name, got, want, true=None, pred=None):
+    if name == DENSITY:
+        assert_density_exact(got, true, pred)
+    else:
+        np.testing.assert_allclose(np.asarray(got), np.asarray(want),
+                                   rtol=1e-12, atol=1e-12, equal_nan=True)
 
 
 @pytest.mark.parametrize("frames", [250, 10000])
@@ -119,11 +153,10 @@ def test_concurrent_force_requests_make_two_input_passes(workspace, frames, lane
             got = list(pool.map(run, METRICS))
         for name, result in zip(METRICS, got):
             assert not isinstance(result, MetricFailure), (name, result)
-            np.testing.assert_allclose(np.asarray(result.values), expected[name],
-                                       rtol=1e-12, atol=1e-12, equal_nan=True)
-        # Pass 1: all error summaries + worst components + parity bounds.
-        # Pass 2: parity histogram only; no scattered outlier-value rereads.
-        assert reads == [2 * len(true), 2 * len(true)]
+            assert_metric_close(name, result.values, expected[name], true, pred)
+        # One pass: all error summaries, worst components and the parity
+        # counts; no second pass for the histogram, no outlier rereads.
+        assert reads == [len(true), len(true)]
         assert workspace.used + workspace.cache_bytes <= workspace.limit
     finally:
         executor.shutdown()
@@ -221,8 +254,7 @@ def test_nonfinite_rules_match_regular_metrics(workspace, bad):
             got = executor.run(name, Source(*wrapped, offsets), {})
             assert isinstance(got, MetricFailure) == isinstance(expected, MetricFailure), (name, got, expected)
             if not isinstance(got, MetricFailure):
-                np.testing.assert_allclose(np.asarray(got.values), expected.values,
-                                           rtol=1e-12, atol=1e-12, equal_nan=True)
+                assert_metric_close(name, got.values, expected.values, true, pred)
     finally:
         executor.shutdown()
 
@@ -1066,3 +1098,72 @@ def test_element_lookup_finds_each_atoms_column_or_refuses():
     wide = np.array([1, 100_000])                         # too wide for a table: search
     np.testing.assert_array_equal(_slots(np.array([100_000, 1]), wide), [1, 0])
     assert _slots(np.array([5]), wide) is None
+
+
+def test_widening_parity_grid_keeps_every_count_exact():
+    """Batches with ever wider values, merged in any order, give exactly the
+    counts of one grid of the final width: doubling a bin's width merges
+    two bins and moves nothing."""
+    from ffast.metrics.force_scan import _FINE, _fine_batch, _merge_fine, _Fine
+
+    rng = np.random.default_rng(5)
+    batches = []
+    for scale in (1e-3, 1.0, 50.0, 0.01, 7e3):
+        t = rng.normal(scale=scale, size=4000) - scale / 2
+        batches.append((t, t + rng.normal(scale=scale / 10, size=t.size)))
+    for order in (range(5), reversed(range(5))):
+        state, total = {}, None
+        for i in order:
+            t, p = batches[i]
+            part = _fine_batch(t, p, min(t.min(), p.min()), max(t.max(), p.max()), state)
+            total = _merge_fine(total, part, state)
+        t = np.concatenate([b[0] for b in batches])
+        p = np.concatenate([b[1] for b in batches])
+        col = np.floor(t / total.width).astype(np.int64) - total.start
+        row = np.floor(p / total.width).astype(np.int64) - total.start
+        want = np.bincount(row * _FINE + col, minlength=_FINE * _FINE).reshape(_FINE, _FINE)
+        np.testing.assert_array_equal(total.counts, want)
+        # The occupied span keeps the plot's resolution: at least half the grid.
+        assert total.high - total.low + 1 >= _FINE // 2
+
+
+@pytest.mark.parametrize("lanes", [1, 4])
+def test_parity_density_of_widening_forces_is_one_pass_and_close(workspace, lanes, monkeypatch):
+    from ffast.metrics import force_scan, resources as execution_resources
+
+    monkeypatch.setattr(execution_resources, "cores", lambda: lanes)
+    selector = force_scan._parallelism
+    monkeypatch.setattr(force_scan, "_parallelism", lambda: selector(maximum=lanes))
+    monkeypatch.setattr(type(workspace), "block_bytes", property(lambda self: 32 * 1024))
+    true, pred, offsets = inputs(3000)
+    grow = np.linspace(0.01, 100, len(true))[:, None]   # later structures much larger
+    true, pred = true * grow, pred * grow - 3
+    reads = [0]
+    executor = ServerExecutor(default_registry)
+    try:
+        got = executor.run(DENSITY, Source(_counted(true, reads), _counted(pred, reads), offsets), {})
+        assert not isinstance(got, MetricFailure), got
+        assert reads == [2 * len(true)]
+        assert_density_exact(got.values, true, pred)
+    finally:
+        executor.shutdown()
+
+
+@pytest.mark.parametrize("case", ["equal", "one", "negative"])
+def test_parity_density_edge_values(workspace, case):
+    true, pred, offsets = inputs(250)
+    if case == "equal":
+        true[:], pred[:] = 2.5, 2.5
+    elif case == "one":
+        pred[1:] = np.nan
+    else:
+        true, pred = -1e6 - np.abs(true), -1e6 - np.abs(pred)
+    executor = ServerExecutor(default_registry)
+    try:
+        got = executor.run(DENSITY, Source(_wrapped(true), _wrapped(pred), offsets), {})
+        want = InProcessExecutor(default_registry).run(DENSITY, Source(true, pred, offsets), {})
+        assert isinstance(got, MetricFailure) == isinstance(want, MetricFailure), (got, want)
+        if not isinstance(got, MetricFailure):
+            assert_density_exact(got.values, true, pred)
+    finally:
+        executor.shutdown()
