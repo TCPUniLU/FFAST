@@ -282,12 +282,13 @@ def test_large_per_frame_summaries_spill_without_storing_delta(workspace, tmp_pa
         assert not isinstance(result, MetricFailure), result
         np.testing.assert_allclose(result.values, np.abs(pred - true).mean(), rtol=1e-12)
         assert reads == [len(true), len(true)]
-        # Only O(frames) arrays: structure MAE and RMSE, and the MAE of each
-        # structure's atoms of each element (one element here). The much
-        # larger O(atoms x xyz) delta is absent.
+        # Only O(frames) arrays: structure MAE and RMSE, the MAE of each
+        # structure's atoms of each element (one element here) and each
+        # structure's net force error (x, y, z). The much larger
+        # O(atoms x xyz) delta is absent.
         files = list((tmp_path / "results").glob("*.npy"))
-        assert len(files) == 3
-        assert sum(p.stat().st_size for p in files) < 100000 * 24 + 3 * 4096
+        assert len(files) == 4
+        assert sum(p.stat().st_size for p in files) < 100000 * 48 + 4 * 4096
         assert workspace.used + workspace.cache_bytes <= workspace.limit
     finally:
         executor.shutdown()
@@ -931,4 +932,123 @@ def test_atomic_errors_are_not_taken_from_other_elements(workspace):
             np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values),
                                        rtol=1e-9, atol=1e-12)
     finally:
+        executor.shutdown()
+
+
+SUBSYSTEM = [
+    "ffast.force_net_residual[structure;component;mae]",
+    "ffast.force_net_residual[dataset;component;mae]",
+    "ffast.force_net_residual[dataset;component;rmse]",
+]
+
+
+@pytest.mark.parametrize("frames", [250, 25_000])
+def test_subsystem_errors_after_basic_errors_read_no_forces(workspace, frames, monkeypatch):
+    """The pass keeps each structure's net force error: the Subsystem Errors
+    metrics after Basic Errors read no forces. Before, each read them all.
+    25,000 structures keep it in a file."""
+    monkeypatch.setattr(type(workspace), "block_bytes", property(lambda self: 4096))
+    true, pred, offsets = inputs(frames)
+    for name in SUBSYSTEM:
+        default_registry.ensure(name)
+    baseline = InProcessExecutor(default_registry)
+    executor = ServerExecutor(default_registry)
+    try:
+        reads = [0]
+        source = Source(_counted(true, reads), _counted(pred, reads), offsets)
+        assert not isinstance(executor.run(METRICS[2], source, {}), MetricFailure)
+        reads[0] = 0
+        for name in SUBSYSTEM:
+            got = executor.run(name, source, {})
+            want = baseline.run(name, Source(true, pred, offsets), {})
+            assert not isinstance(got, MetricFailure), (name, got)
+            np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values),
+                                       rtol=1e-12, atol=1e-12, equal_nan=True)
+        assert reads == [0]
+    finally:
+        executor.shutdown()
+
+
+def test_subsystem_errors_first_give_basic_errors_without_a_read(workspace):
+    true, pred, offsets = inputs(250)
+    default_registry.ensure(SUBSYSTEM[0])
+    baseline = InProcessExecutor(default_registry)
+    executor = ServerExecutor(default_registry)
+    try:
+        reads = [0]
+        source = Source(_counted(true, reads), _counted(pred, reads), offsets)
+        assert not isinstance(executor.run(SUBSYSTEM[0], source, {}), MetricFailure)
+        assert reads == [2 * len(true)]
+        reads[0] = 0
+        got = executor.run(METRICS[0], source, {})
+        assert reads == [0]
+        np.testing.assert_allclose(got.values, baseline.run(METRICS[0], Source(true, pred, offsets), {}).values,
+                                   rtol=1e-12)
+    finally:
+        executor.shutdown()
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+def test_subsystem_errors_with_bad_forces_match_regular_metrics(workspace, bad):
+    true, pred, offsets = inputs(250)
+    pred[2, 1] = bad
+    for name in SUBSYSTEM:
+        default_registry.ensure(name)
+    baseline = InProcessExecutor(default_registry)
+    executor = ServerExecutor(default_registry)
+    try:
+        source = Source(_wrapped(true), _wrapped(pred), offsets)
+        executor.run(METRICS[2], source, {})
+        for name in SUBSYSTEM:
+            want = baseline.run(name, Source(true, pred, offsets), {})
+            got = executor.run(name, source, {})
+            assert isinstance(got, MetricFailure) == isinstance(want, MetricFailure), (name, got, want)
+            if not isinstance(got, MetricFailure):
+                np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values),
+                                           rtol=1e-12, atol=1e-12, equal_nan=True)
+    finally:
+        executor.shutdown()
+
+
+@pytest.mark.parametrize("colour", ATOMIC[:2])
+def test_element_colouring_after_the_plots_reads_no_forces(workspace, colour):
+    true, pred, offsets, elements = _atomic_inputs(250)
+    default_registry.ensure(colour)
+    fresh = ServerExecutor(default_registry)
+    executor = ServerExecutor(default_registry)
+    try:
+        want = fresh.run_colouring(
+            colour, _with_elements(Source(_wrapped(true), _wrapped(pred), offsets), elements), {})
+        assert not isinstance(want, MetricFailure), want
+        reads = [0]
+        source = _with_elements(Source(_counted(true, reads), _counted(pred, reads), offsets), elements)
+        executor.run(METRICS[2], source, {})
+        reads[0] = 0
+        got = executor.run_colouring(colour, source, {})
+        assert not isinstance(got, MetricFailure), got
+        assert reads == [0]
+        np.testing.assert_allclose(got._colour_span, want._colour_span, rtol=1e-12)
+        np.testing.assert_allclose(np.asarray(got.values), np.asarray(want.values), rtol=1e-12)
+        np.testing.assert_array_equal(got._colour_elements, want._colour_elements)
+    finally:
+        fresh.shutdown()
+        executor.shutdown()
+
+
+def test_element_colouring_with_bad_forces_behaves_as_without_the_plots(workspace):
+    colour = ATOMIC[0]
+    true, pred, offsets, elements = _atomic_inputs(250)
+    pred[2, 1] = np.nan
+    default_registry.ensure(colour)
+    fresh = ServerExecutor(default_registry)
+    executor = ServerExecutor(default_registry)
+    try:
+        want = fresh.run_colouring(
+            colour, _with_elements(Source(_wrapped(true), _wrapped(pred), offsets), elements), {})
+        source = _with_elements(Source(_wrapped(true), _wrapped(pred), offsets), elements)
+        executor.run(METRICS[2], source, {})
+        got = executor.run_colouring(colour, source, {})
+        assert isinstance(got, MetricFailure) == isinstance(want, MetricFailure), (got, want)
+    finally:
+        fresh.shutdown()
         executor.shutdown()

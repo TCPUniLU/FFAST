@@ -100,6 +100,8 @@ def role(metric_id, fn):
         return "outliers"
     if metric_id == "ffast.force_parity_density" and fn is f.force_parity_density:
         return "density"
+    if metric_id == "ffast.force_net_residual" and fn is f.force_net_residual:
+        return "net"
     a = sys.modules.get("ffast.metrics.builtin.atomic_metrics")
     if metric_id == _ELEMENT_KDE and a is not None and fn is a.force_mae_per_structure_per_element_kde:
         return "element_kde"
@@ -215,6 +217,8 @@ class _Partial:
     element_sums: np.ndarray | None = None
     # Each structure's MAE per element (NaN where it has none of that element).
     element_table: np.ndarray | None = None
+    # Each structure's net force error: the sum of its atoms' errors (x, y, z).
+    net: np.ndarray | None = None
 
 
 def _element_batch(a, b, start, end, elements, columns, table, absolute, atom_abs, atom_sq, sizes):
@@ -252,6 +256,8 @@ def _summary_batch(batch, reference, predicted, offsets, elements=None, columns=
         sizes = np.diff(local)
         frame_abs = segmentSums(atom_abs, local) / sizes
         frame_rms = np.sqrt(segmentSums(atom_sq, local) / sizes)
+        # The same arithmetic as force_net_residual, structure by structure.
+        net = segmentSums(delta, local)
     bad = tuple(bool((~np.isfinite(v) & (sizes > 0)).any())
                 for v in (frame_abs, frame_rms))
     lo, hi = np.inf, -np.inf
@@ -274,7 +280,7 @@ def _summary_batch(batch, reference, predicted, offsets, elements=None, columns=
     return _Partial(a, b, end - start, atom_abs.sum(), atom_sq.sum(),
                     frame_abs, frame_rms, bad, lo, hi, selected + 3 * start,
                     flat[selected], t.ravel()[selected], p.ravel()[selected], atom_ranges,
-                    element_sums, element_table)
+                    element_sums, element_table, net)
 
 
 @dataclass
@@ -300,13 +306,36 @@ class Summary:
     # One column per element: each structure's MAE over its atoms of that
     # element (NaN without one). None when it was not kept.
     element_table: list | None = None
+    # Each structure's net force error (structures x 3), the value of
+    # force_net_residual; None when storage refused it.
+    net: np.ndarray | None = None
+
+
+def _in_memory(owner, size):
+    """Whether a value the pass keeps for other tabs stays in RAM. These are
+    extras: beyond a small share of one block they go to result files, so
+    they never take the RAM the pass and the plots need."""
+    return size <= min(128 * 2**20, owner.limit // 8) and (
+        size <= owner.block_bytes // 16 or owner.result_limit == 0)
+
+
+def _net_storage(owner, n):
+    """``("memory", array)``, ``("files", [writer])`` or None: where each
+    structure's net force error goes. None leaves it to its own pass."""
+    try:
+        if _in_memory(owner, n * 24):
+            with owner.reserve(n * 24) as lease:
+                return "memory", owner.retain(np.empty((n, 3)), lease)
+        return "files", [ResultWriter((n, 3), float)]
+    except NotEnoughMemory:
+        return None
 
 
 def _table_storage(owner, n, width):
     """``("memory", array)``, ``("files", writers)`` or None: where each
     structure's per-element MAE goes. None leaves it to its own pass."""
     size = n * width * 8
-    if size <= min(128 * 2**20, owner.limit // 8) and (size <= owner.block_bytes or owner.result_limit == 0):
+    if _in_memory(owner, size):
         try:
             with owner.reserve(size) as lease:
                 return "memory", owner.retain(np.full((n, width), np.nan), lease)
@@ -348,6 +377,7 @@ def scan(reference, predicted, offsets, elements=None):
         elif columns.size <= _TABLE_ELEMENTS:
             table = _table_storage(owner, n, columns.size)
     element_sums = None if columns is None else np.zeros((3, columns.size))
+    net = _net_storage(owner, n)
     # Preserve downstream streaming for large frame series, just as the
     # expression evaluator does. Small arrays (or admitted disk-free results)
     # stay resident; the two O(frames) arrays otherwise own ordinary result files.
@@ -405,6 +435,11 @@ def scan(reference, predicted, offsets, elements=None):
                         table = None
                     else:
                         element_sums += part.element_sums
+                if net is not None:
+                    if net[0] == "memory":
+                        net[1][part.first:part.last] = part.net
+                    else:
+                        net[1][0].append(part.net)
                 if table is not None:
                     if table[0] == "memory":
                         table[1][part.first:part.last] = part.element_table
@@ -466,9 +501,17 @@ def scan(reference, predicted, offsets, elements=None):
                 table = None
         else:
             columns = None
+        net_values = None
+        if net is not None:
+            if net[0] == "memory":
+                net_values = net[1]
+                net_values.flags.writeable = False
+            else:
+                net_values = net[1][0].finish()
+            net = None
         result = Summary(mae, rmse, frame_mae, frame_rmse, outliers, (lo, hi),
                          tuple(bad_frames), batches, count, _width.get(), atom_ranges,
-                         columns, element_mae, element_rmse, element_table)
+                         columns, element_mae, element_rmse, element_table, net_values)
         log.info("force_batch_scan: summary, %d batches, %d atoms, %d lanes, one difference per batch",
                  batches, count, _width.get())
         return result
@@ -476,6 +519,7 @@ def scan(reference, predicted, offsets, elements=None):
         for writer in writers:
             writer.abort()
         _drop_table(table)
+        _drop_table(net)
         raise
 
 
@@ -601,6 +645,12 @@ class Lease:
             return self.group.get("histogram", self)
         if name.startswith("element_"):
             return self._element(name, fn, result)
+        if name == "net":
+            if result.net is None:
+                return NOT_HANDLED
+            if self.stopped():
+                raise stop.Stopped(stop.STOPPED)
+            return result.net
         value = getattr(result, name)
         if name in ("mae", "rmse", "frame_mae", "frame_rmse"):
             bad = (result.bad_frames[name == "frame_rmse"] if name.startswith("frame_")
@@ -762,6 +812,28 @@ class ForceScans:
             with group.condition:
                 if "summary" not in group.results:
                     group.from_colour.update(values)
+
+    def element_values(self, plan, source, registry, metric_id):
+        """The per-element force MAE or RMSE of a summary already made for
+        the same forces and elements, or None. Never reads or scans: a 3D
+        colouring by element error after the plots then reads no forces."""
+        name = role(metric_id, registry.get(metric_id)[1])
+        if name not in ("element_mae", "element_rmse"):
+            return None
+        found = self._identify(plan, source, registry)
+        if found is None or found[0][-1] is None:
+            return None
+        with self.lock:
+            group = self.groups.get(found[0])
+            if group is None:
+                return None
+            with group.condition:
+                summary = None if group.invalid else group.results.get("summary")
+        if summary is None or summary.element_mae is None:
+            return None
+        value = getattr(summary, name)
+        # A bad value is the colour pass's own question, as for the ranges.
+        return value if np.isfinite(value).all() else None
 
     def colour_range(self, plan, source, registry, metric_id):
         """``(lowest, highest)`` of a per-atom force error from a summary

@@ -301,20 +301,26 @@ class ServerExecutor(MetricExecutor):
                     self._registry, id, parameters, source
                 )
                 final_key = {}
+                # Colouring by element error after the plots: the shared
+                # force pass already has the per-element values.
+                known_values = self._force_scans.element_values(
+                    plan, source, self._registry, id)
                 results = run_plan(
                     plan,
                     self._registry,
                     self._colour_cache,
-                    lambda mid, schema, fn, kwargs, params: self._step(
-                        mid,
-                        schema,
-                        fn,
-                        kwargs,
-                        params,
-                        parameters,
-                        source.stopped,
-                        defer_result=True,
-                    ),
+                    lambda mid, schema, fn, kwargs, params: (
+                        known_values if mid == id and known_values is not None
+                        else self._step(
+                            mid,
+                            schema,
+                            fn,
+                            kwargs,
+                            params,
+                            parameters,
+                            source.stopped,
+                            defer_result=True,
+                        )),
                     stopped=source.stopped,
                     key_out=final_key,
                     uses=getattr(source, "uses", frozenset)(),

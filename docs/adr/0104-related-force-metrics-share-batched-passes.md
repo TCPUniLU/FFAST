@@ -200,3 +200,26 @@ Cost, measured with a prototype of the same arithmetic on the 83 GB file:
 budget 375 s -> 395 s (+5%). The per-element sums run in another order than
 the formula's, so values may differ in the last bits (tests compare to 1e-9
 for the distribution, 1e-12 for the rest).
+
+## Amendment 2026-11-21 (later): Subsystem Errors and colouring by element error
+
+**Subsystem Errors.** Its three metrics (`force_net_residual[structure;component;mae]`,
+`[dataset;component;mae]` and `[dataset;component;rmse]`) each read every
+force again, even right after Basic Errors: each runs `force_net_residual`
+(each structure's sum of its atoms' errors) as a value read on demand. The
+summary pass now also keeps that sum, three numbers per structure, with the
+same arithmetic as `force_net_residual`. The shared pass answers
+`force_net_residual` from it, so these metrics after Basic Errors read no
+forces, and Subsystem Errors first runs the one pass for both.
+
+**Colouring by element error.** Colouring the 3D view by
+`force_difference[element;component;mae]` or `[...;rmse]` takes the
+per-element values of a finished summary (`ForceScans.element_values`) and
+reads no forces. As for the per-atom ranges, a non-finite value leaves it to
+the colour pass, and colouring first does not run the summary pass.
+
+**Where kept values go.** The values kept for other tabs (each structure's
+net force error and MAE per element) stay in RAM only up to 1/16 of a
+memory block; larger ones go to result files, so they never take the RAM
+the pass and the plots need. On the 83 GB file the net force errors take
+170 MB of disk (7.09M structures x 3 x 8 bytes).
