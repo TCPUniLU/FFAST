@@ -115,6 +115,18 @@ export function sortEntries(entries, sort = DEFAULT_SORT) {
     || f * by(a, b) || name(a, b));
 }
 
+/** Endings that are never structures (pictures, documents, logs, code,
+ * settings, archives). ASE's reader takes any ending, so nothing else is
+ * ruled out: `.out`, `.json`, `.gz`, `.csv` and `.dat` may well be data. */
+const NOT_STRUCTURES = /\.(png|jpe?g|gif|svg|webp|bmp|tiff?|pdf|eps|ps|log|txt|md|rst|tex|py|pyc|ipynb|sh|bash|zsh|c|h|cpp|f90|js|css|html?|toml|ya?ml|ini|cfg|lock|zip|tar|tgz|bz2|xz|7z|rar|mp4|mov|avi|docx?|xlsx?|pptx?|odt)$/i;
+
+/** Whether a listed file is plainly not something to load as a dataset or
+ * prediction: one of the endings above, or a hidden file (`.bashrc`). */
+export function looksUnreadable(entry) {
+  if (!entry || entry.is_dir) return false;
+  return entry.name.startsWith('.') || NOT_STRUCTURES.test(entry.name);
+}
+
 /** When a file changed, short: "Today 14:05", "Yesterday", "3 days ago",
  * else the date ("12 Nov 2026"). `mtime` in seconds, `now` in ms. */
 export function formatWhen(mtime, now = Date.now()) {
@@ -1297,6 +1309,11 @@ export class RemoteBrowser {
     for (const e of sortEntries(this._entries, this._sort)) {
       const row = document.createElement('div');
       row.className = `fb-row ${e.is_dir ? 'dir' : 'file'}`;
+      // Dimmed, still choosable: the list of endings is a guess (looksUnreadable).
+      if ((this._mode === 'dataset' || this._mode === 'prediction') && looksUnreadable(e)) {
+        row.classList.add('other');
+        row.title = 'Probably not a structure file';
+      }
       if (!e.is_dir) row.dataset.size = String(e.size ?? 0);
       const icon = document.createElement('span');
       icon.className = 'fb-icon';

@@ -443,3 +443,31 @@ async def test_web_the_file_list_sorts_by_a_clicked_column_and_shows_dates(ffast
             await expect(page.locator("#fb-cols [data-sort='mtime']")).to_have_attribute("aria-sort", "descending")
         finally:
             await browser.close()
+
+
+async def test_web_plainly_other_files_are_dimmed_but_choosable(ffast_web_server, tmp_path):
+    """Loading a dataset, a picture or a log is dimmed (it is not a
+    structure), yet can still be chosen; a model's list dims nothing."""
+    (tmp_path / "a.xyz").write_text("x")
+    (tmp_path / "plot.png").write_bytes(b"x")
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 900})
+        png = page.locator("#fb-list .fb-row", has_text="plot.png")
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await _go_to(page, tmp_path)
+            await expect(png).to_have_class(re.compile(r"\bother\b"))
+            await expect(page.locator("#fb-list .fb-row", has_text="a.xyz")).not_to_have_class(re.compile(r"\bother\b"))
+            await png.click()
+            await expect(png).to_have_class(re.compile(r"\bselected\b"))
+            await page.locator("#fb-cancel").click()
+            await _file_menu(page, "Load Model…")
+            await _go_to(page, tmp_path)
+            await expect(png).not_to_have_class(re.compile(r"\bother\b"))
+        finally:
+            await browser.close()

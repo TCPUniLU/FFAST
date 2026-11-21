@@ -1025,6 +1025,10 @@ CASES = {
         " return [rb.formatWhen(s(2026, 10, 21, 9, 5), now), rb.formatWhen(s(2026, 10, 20, 23, 0), now),"
         " rb.formatWhen(s(2026, 10, 18, 12, 0), now), rb.formatWhen(s(2026, 9, 3, 12, 0), now),"
         " rb.formatWhen(null, now)]; })()"),
+    "looks_unreadable": (
+        "['a.xyz', 'b.extxyz', 'run.h5', 'c.npz', 'OUTCAR', 'md.out', 'db.json', 'a.xyz.gz', 'e.csv',"
+        " 'plot.png', 'lammps.log', 'notes.txt', 'in.sh', 'Report.PDF', '.bashrc'].map((name) =>"
+        " rb.looksUnreadable({name})).concat([rb.looksUnreadable({name: 'logs.png', is_dir: true})])"),
     "match_entries": "rb.matchEntries([{name: 'Alpha'}, {name: 'beta'}, {name: 'alps'}], 'AL').map(e => e.name)",
     "remember_files": (
         "(() => { let l = []; for (const p of ['a', 'b', 'a']) l = rf.rememberFile(l, {path: p, kind: 'dataset'});"
@@ -3227,3 +3231,7 @@ def test_a_column_clicked_again_turns_round_and_a_new_one_starts_largest_first(r
 
 def test_a_files_date_reads_today_yesterday_days_ago_or_the_date(results):
     assert results["format_when"] == ["Today 09:05", "Yesterday", "3 days ago", "3 Oct 2026", ""]
+
+
+def test_only_plainly_other_files_look_unreadable(results):
+    assert results["looks_unreadable"] == [False] * 9 + [True] * 6 + [False]
