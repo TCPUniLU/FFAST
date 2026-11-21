@@ -119,7 +119,9 @@ def save(index, arrays):
         tmp = folder / f".{entry.name}.{os.getpid()}.tmp"
         shutil.rmtree(tmp, ignore_errors=True)
         tmp.mkdir()
+        st = os.stat(index.path)
         meta = {"path": source, "step": getattr(index, "step", 1),
+                "state": [st.st_size, st.st_mtime_ns],      # which version of the file
                 "properties": arrays.properties, "essential": arrays.essential,
                 "extras": arrays.extras, "columns": {}, "missing": {}, "values": {}}
         for field in ("counts", "numbers", "positions", "cells", "pbc"):

@@ -1,6 +1,7 @@
 # Parsed cache copies have pins, open-copy locks and one eviction
 
-Status: Accepted and implemented 2026-11-19. Builds on ADRs 0083, 0103, 0106 and 0107.
+Status: Accepted and implemented 2026-11-19; protection of older file versions
+changed 2026-11-21 (see the last section). Builds on ADRs 0083, 0103, 0106 and 0107.
 Replaces the SQLite catalog planned in spec v1.1 §11a item 2.
 
 FFAST keeps parsed copies of `.xyz` files on disk so the second open is
@@ -146,3 +147,21 @@ files in `batches/` with names a store did not make are counted and evicted as
 small records; the manifest write at the end of a finished scan may trim its own
 per-atom batches (the exception above); the lock of a read-once array set lasts
 until its last array is freed.
+
+## Change 2026-11-21: protection covers the current version only
+
+The rule "a pin covers every entry of that path, now and after the file
+changes" also applied to an open copy and to the dataset being saved: they
+protected every copy of the path. A file that grows (live LAMMPS output)
+gets a new copy for each version that is loaded, so a pinned or open
+growing file left one copy per version that nothing could evict. Found by
+`tests/ffast/readers/test_cache_combinations.py`.
+
+Now a pin, an open copy or a save protects only the copies made from the
+file as it is now (batches compare device, inode, size and modification
+time from `.source.json`; whole-array entries compare size and modification
+time, now written to `meta.json`). A copy of an older version is protected
+only while it is open itself, and is otherwise evicted on its own, oldest
+first. A copy with no recorded state (made before this change), or a
+source file that is gone, counts as current, so it keeps its protection.
+The pin file and `cache delete` are unchanged.

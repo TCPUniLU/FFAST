@@ -119,3 +119,23 @@ def test_a_failed_save_still_loads(tmp_path, monkeypatch, reads):
     assert _load(path).N == 3
     assert _load(path).N == 3
     assert len(reads) == 2
+
+
+def test_a_pin_protects_the_kept_arrays_of_the_file_as_it_is_now_not_older_ones(tmp_path, reads):
+    """ADR 0108 as changed 2026-11-21: older versions of a pinned file can be evicted."""
+    from ffast.io import cache_space
+
+    path = _write(tmp_path)
+    _load(path)
+    old = {d.name for d in _entries()}
+    st = os.stat(path)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    _load(path)
+    fi.clear_memory_cache()
+    gc.collect()                                          # neither copy is open
+    root = frame_cache._folder()
+    cache_space.write_pins(root, [os.path.realpath(path)])
+    new = {d.name for d in _entries()} - old
+    assert len(old) == 1 and len(new) == 1
+    cache_space.make_room(root, 1, 1)
+    assert {d.name for d in _entries()} == new

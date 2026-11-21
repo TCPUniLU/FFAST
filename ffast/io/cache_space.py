@@ -8,8 +8,10 @@ the same source file form one *dataset*.
 This module finds the entries, tells which are protected and makes room.
 A dataset is protected when it is pinned (``pins.json``), when any of its
 entries is open in some process (a shared ``flock`` on its ``.open`` file),
-or when it is the dataset being saved. Everything else goes oldest last-use
-first. All eviction and every publish of a new entry run under one exclusive
+or when it is the dataset being saved. That protection covers only the
+copies of the file as it is now: a copy of an older version of the file is
+protected only while it is open itself. Everything else goes oldest
+last-use first. All eviction and every publish of a new entry run under one exclusive
 lock, ``<root>/.space.lock``.
 """
 from __future__ import annotations
@@ -56,6 +58,8 @@ class Entry:
     bytes: int = 0
     last_used: float = 0.0
     root: Path = None
+    state: list | None = None  # the source file's state when the copy was made
+
 
     @property
     def folder(self):
@@ -84,6 +88,15 @@ class Dataset:
 
 # ---------------------------------------------------------------- finding
 
+def _read_state(file):
+    """The ``state`` list a copy recorded, or None (unknown, older copies)."""
+    try:
+        value = json.loads(Path(file).read_text()).get("state")
+        return list(value) if isinstance(value, list) else None
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+
+
 def _read_path(file, key=None):
     try:
         data = json.loads(Path(file).read_text())
@@ -111,7 +124,8 @@ def _array_entry(root, d):
             last = d.stat().st_mtime
         except OSError:
             last = 0.0
-    return Entry("arrays", d.name, _read_path(meta), files, size, last, root)
+    return Entry("arrays", d.name, _read_path(meta), files, size, last, root,
+                 state=_read_state(meta))
 
 
 def _batch_entries(root):
@@ -149,6 +163,7 @@ def _batch_entries(root):
         entry = Entry("batches", identity, None, [f for f, _ in items],
                       sum(s.st_size for _, s in items), 0.0, root)
         entry.path = _read_path(entry.source_file)
+        entry.state = _read_state(entry.source_file)
         stamps = {f.name: s.st_mtime for f, s in items}
         entry.last_used = stamps.get(entry.source_file.name, max(stamps.values()))
         out.append(entry)
@@ -206,6 +221,56 @@ def _group(root, ents, pins):
             pinned=path is not None and path in pins,
             open=any(is_open(e.open_file) for e in items)))
     return out
+
+
+def _source_state(path):
+    """``(dev, inode, size, mtime_ns)`` of the source now, None when it is gone."""
+    try:
+        s = os.stat(path)
+    except (OSError, TypeError):
+        return None
+    return [s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns]
+
+
+def _is_current(entry, now):
+    """True when ``entry`` was made from the source as it is now ``now``. A
+    copy that recorded no state, or a source that is gone, counts as current:
+    with no way to tell, the copy keeps its protection."""
+    if entry.state is None or now is None:
+        return True
+    if entry.kind == "arrays":                 # recorded as [size, mtime_ns]
+        return entry.state == now[2:]
+    return entry.state == now
+
+
+def _split(ds, saving):
+    """``(protected, victims, kept_bytes)`` for one dataset (ADR 0108 as changed
+    2026-11-21). A pin, an open copy or a save protects the copies of the file
+    as it is now. A copy of an older version is protected only while it is
+    open itself, and is otherwise evicted on its own, oldest first."""
+    now = _source_state(ds.path) if ds.path is not None else None
+    current = [e for e in ds.entries if _is_current(e, now)]
+    older = [e for e in ds.entries if not _is_current(e, now)]
+    saved = saving is not None and ds.path == saving
+    victims, kept = [], 0
+    if current:
+        if saved:
+            pass
+        elif ds.pinned or any(is_open(e.open_file) for e in current):
+            kept += sum(e.bytes for e in current)
+        else:
+            victims.append(_part_of(ds, current))
+    for e in older:
+        if is_open(e.open_file):
+            kept += e.bytes
+        else:
+            victims.append(_part_of(ds, [e]))
+    return victims, kept
+
+
+def _part_of(ds, ents):
+    return Dataset(path=ds.path, entries=ents, bytes=sum(e.bytes for e in ents),
+                   last_used=max(e.last_used for e in ents), pinned=False, open=False)
 
 
 def datasets(root):
@@ -457,14 +522,11 @@ def make_room(root, need, limit, saving=None, locked=False, trim_own_atom_batche
             return True
         pins = set(read_pins(root))
         victims = []
-        kept = 0                  # bytes of pinned or open datasets other than the saving one
+        kept = 0                  # bytes of pinned or open copies other than the saving one
         for ds in _group(root, ents, pins):
-            if saving is not None and ds.path == saving:
-                continue
-            if ds.pinned or ds.open:
-                kept += ds.bytes
-                continue
-            victims.append(ds)
+            parts, protected = _split(ds, saving)
+            victims += parts
+            kept += protected
         victims.sort(key=lambda d: (d.last_used, d.path or ""))
         for ds in victims:
             if total + need <= limit:
