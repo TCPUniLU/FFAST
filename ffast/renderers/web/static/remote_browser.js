@@ -92,6 +92,54 @@ export function matchEntries(entries, prefix, limit = 8) {
   return (entries || []).filter((e) => e.name.toLowerCase().startsWith(p)).slice(0, limit);
 }
 
+/** How the file list is ordered: by `name`, `size` or `mtime`, folders first. */
+export const DEFAULT_SORT = { key: 'name', asc: true };
+
+/** A column header clicked: the same column turns round; a new one starts
+ * A→Z for names and largest or newest first for sizes and dates. */
+export function nextSort(sort, key) {
+  if (sort?.key === key) return { key, asc: !sort.asc };
+  return { key, asc: key === 'name' };
+}
+
+/** The entries in `sort` order: folders first, ties by name. */
+export function sortEntries(entries, sort = DEFAULT_SORT) {
+  const name = (a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  const by = {
+    name,
+    size: (a, b) => (a.size || 0) - (b.size || 0),
+    mtime: (a, b) => (a.mtime ?? 0) - (b.mtime ?? 0),
+  }[sort?.key] || name;
+  const f = sort?.asc === false ? -1 : 1;
+  return [...(entries || [])].sort((a, b) => (Number(Boolean(b.is_dir)) - Number(Boolean(a.is_dir)))
+    || f * by(a, b) || name(a, b));
+}
+
+/** When a file changed, short: "Today 14:05", "Yesterday", "3 days ago",
+ * else the date ("12 Nov 2026"). `mtime` in seconds, `now` in ms. */
+export function formatWhen(mtime, now = Date.now()) {
+  if (mtime === null || mtime === undefined || !Number.isFinite(Number(mtime))) return '';
+  const t = new Date(Number(mtime) * 1000);
+  const day = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((day(new Date(now)) - day(t)) / 86_400_000);
+  if (days === 0) return `Today ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  if (days === 1) return 'Yesterday';
+  if (days > 1 && days < 7) return `${days} days ago`;
+  return `${t.getDate()} ${t.toLocaleString('en-GB', { month: 'short' })} ${t.getFullYear()}`;
+}
+
+/** The list order this browser used last (a convenience: none is fine). */
+const SORT_STORE = 'ffast.fileSort';
+function loadSort() {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(SORT_STORE) || 'null');
+    return v && ['name', 'size', 'mtime'].includes(v.key) ? { key: v.key, asc: v.asc !== false } : DEFAULT_SORT;
+  } catch { return DEFAULT_SORT; }
+}
+function saveSort(sort) {
+  try { window.localStorage.setItem(SORT_STORE, JSON.stringify(sort)); } catch { /* private window */ }
+}
+
 /** The browser also chooses where a session or an export goes (web parity). */
 export const PICK_MODES = new Set(['save-folder', 'open-folder', 'save-file']);
 
@@ -377,6 +425,8 @@ export class RemoteBrowser {
     // window has not been told of yet: fingerprint → the load.
     this._awaiting = new Map();
     this._navSeq = 0;   // the latest navigation: an older listing is not shown
+    this._entries = [];   // the folder on screen, as listed
+    this._sort = loadSort();
     this._suggest = { items: [], active: -1, dir: '' };
     this._suggestTimer = null;
     this._selectAfterListing = null;   // a Recent file to select once its folder is listed
@@ -452,6 +502,14 @@ export class RemoteBrowser {
       this._askSuggestions();
     });
     $('fb-path').addEventListener('blur', () => setTimeout(() => this._hideSuggestions(), 150));
+    // Click a column name to order the list by it; again to turn it round.
+    for (const head of document.querySelectorAll('#fb-cols [data-sort]')) {
+      head.addEventListener('click', () => {
+        this._sort = nextSort(this._sort, head.dataset.sort);
+        saveSort(this._sort);
+        this._drawList();
+      });
+    }
     // One listener for the whole list: its rows are rebuilt on every folder change.
     $('fb-list').addEventListener('keydown', (e) => this._listKey(e));
   }
@@ -1221,9 +1279,22 @@ export class RemoteBrowser {
   }
 
   _render(entries) {
+    this._entries = entries;
+    this._drawList();
+  }
+
+  /** The folder's rows, in the chosen order. */
+  _drawList() {
+    for (const head of document.querySelectorAll('#fb-cols [data-sort]')) {
+      const on = head.dataset.sort === this._sort.key;
+      head.classList.toggle('on', on);
+      head.setAttribute('aria-sort', on ? (this._sort.asc ? 'ascending' : 'descending') : 'none');
+      head.querySelector('.arrow').textContent = on ? (this._sort.asc ? '▲' : '▼') : '';
+    }
     const list = $('fb-list');
+    const selected = this._selected;
     list.innerHTML = '';
-    for (const e of entries) {
+    for (const e of sortEntries(this._entries, this._sort)) {
       const row = document.createElement('div');
       row.className = `fb-row ${e.is_dir ? 'dir' : 'file'}`;
       if (!e.is_dir) row.dataset.size = String(e.size ?? 0);
@@ -1233,13 +1304,14 @@ export class RemoteBrowser {
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = e.name;
-      row.append(icon, name);
-      if (!e.is_dir) {
-        const size = document.createElement('span');
-        size.className = 'size';
-        size.textContent = formatSize(e.size);
-        row.append(size);
-      }
+      const size = document.createElement('span');
+      size.className = 'size';
+      size.textContent = e.is_dir ? '' : formatSize(e.size);
+      const when = document.createElement('span');
+      when.className = 'when';
+      when.textContent = formatWhen(e.mtime);
+      row.append(icon, name, size, when);
+      if (!e.is_dir && e.name === selected) row.classList.add('selected');
       row.tabIndex = 0;
       // A pick may treat some folders as one item (a reference's .bundle).
       const item = e.is_dir && this._pick?.itemDirs?.test(e.name);

@@ -404,3 +404,42 @@ async def test_web_a_file_path_typed_or_pasted_chooses_that_file(ffast_web_serve
                 f'No "no_such_run" in {DATASET_PATH.parent}')
         finally:
             await browser.close()
+
+
+async def test_web_the_file_list_sorts_by_a_clicked_column_and_shows_dates(ffast_web_server, tmp_path):
+    """Name, Size and Modified order the list (folders stay first); the
+    order is kept for the next opening; each file shows when it changed."""
+    import os
+    for name, size, age_days in [("big.xyz", 300, 9), ("mid.xyz", 200, 0), ("small.xyz", 100, 4)]:
+        path = tmp_path / name
+        path.write_bytes(b"x" * size)
+        when = path.stat().st_mtime - age_days * 86400
+        os.utime(path, (when, when))
+    (tmp_path / "sub").mkdir()
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 900})
+        names = page.locator("#fb-list .fb-row .name")
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await _go_to(page, tmp_path)
+            await expect(names).to_have_text(["sub", "big.xyz", "mid.xyz", "small.xyz"])
+            await expect(page.locator("#fb-list .fb-row.file", has_text="mid.xyz").locator(".when")).to_contain_text("Today")
+            await page.locator("#fb-cols [data-sort='size']").click()
+            await expect(names).to_have_text(["sub", "big.xyz", "mid.xyz", "small.xyz"])
+            await page.locator("#fb-cols [data-sort='size']").click()
+            await expect(names).to_have_text(["sub", "small.xyz", "mid.xyz", "big.xyz"])
+            await page.locator("#fb-cols [data-sort='mtime']").click()
+            await expect(names).to_have_text(["sub", "mid.xyz", "small.xyz", "big.xyz"])
+
+            await page.locator("#fb-cancel").click()
+            await _file_menu(page, "Load Dataset…")
+            await _go_to(page, tmp_path)
+            await expect(names).to_have_text(["sub", "mid.xyz", "small.xyz", "big.xyz"])
+            await expect(page.locator("#fb-cols [data-sort='mtime']")).to_have_attribute("aria-sort", "descending")
+        finally:
+            await browser.close()

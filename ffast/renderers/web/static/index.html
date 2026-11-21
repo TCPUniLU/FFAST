@@ -1561,7 +1561,22 @@
     .fb-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .fb-row .fb-icon { width: 16px; text-align: center; flex-shrink: 0; }
     .fb-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .fb-row .size { color: var(--muted); font-size: var(--fs-s); flex-shrink: 0; }
+    .fb-row .size { color: var(--muted); font-size: var(--fs-s); flex-shrink: 0; width: 72px; text-align: right; font-variant-numeric: tabular-nums; }
+    .fb-row .when { color: var(--muted); font-size: var(--fs-s); flex-shrink: 0; width: 104px; white-space: nowrap; }
+    #fb-cols {
+      display: flex; align-items: center; gap: 8px; padding: 2px 12px; flex-shrink: 0;
+      border-bottom: 1px solid var(--line); font-size: var(--fs-xs); color: var(--muted);
+    }
+    #fb-cols button {
+      background: none; border: 0; box-shadow: none; padding: 2px 0; color: inherit;
+      font: inherit; cursor: pointer; text-align: left;
+    }
+    #fb-cols button:hover, #fb-cols button.on { color: var(--ink); }
+    #fb-cols .name { flex: 1; }
+    #fb-cols .size { width: 72px; flex-shrink: 0; text-align: right; }
+    #fb-cols .when { width: 104px; flex-shrink: 0; }
+    #fb-cols .arrow { font-size: 0.8em; }
+    @media (max-width: 520px) { .fb-row .when, #fb-cols .when { display: none; } }
     .fb-row.dir .name { color: var(--text1); }
     .fb-row.file .name { color: var(--ink-3); }
     #fb-suggest {
@@ -1967,6 +1982,12 @@
       <div id="fb-suggest" class="hidden" role="listbox" aria-label="Path suggestions"></div>
       <div id="fb-recent" hidden></div>
       <div id="fb-error" style="display:none"></div>
+      <div id="fb-cols" role="row">
+        <span class="fb-icon"></span>
+        <button type="button" class="name" data-sort="name">Name <span class="arrow"></span></button>
+        <button type="button" class="size" data-sort="size">Size <span class="arrow"></span></button>
+        <button type="button" class="when" data-sort="mtime">Modified <span class="arrow"></span></button>
+      </div>
       <div id="fb-list"></div>
       <!-- Which energy/force keys a dataset uses, when its file offers a
            choice. -->

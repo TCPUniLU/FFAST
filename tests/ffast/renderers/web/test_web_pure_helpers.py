@@ -1012,6 +1012,19 @@ CASES = {
     "unit_choices": "[ru.unitChoices('energy', []), ru.unitChoices('energy', ['kcal/mol', 'meV']), ru.unitChoices('force', ['eV/Å'])]",
     "remember_unit": "[ru.rememberUnit(['a', 'b'], 'b'), ru.rememberUnit(['a', 'b'], 'c')]",
     "typed_parts": "[rb.typedParts('/a/b/ca'), rb.typedParts('/a/'), rb.typedParts('/ab'), rb.typedParts('abc')]",
+    "sort_entries": (
+        "(() => { const e = [{name: 'b.xyz', size: 5, mtime: 30}, {name: 'Z', is_dir: true, size: 0, mtime: 10},"
+        " {name: 'a.xyz', size: 9, mtime: 20}, {name: 'c.log', size: 5, mtime: 40}];"
+        " const names = (s) => rb.sortEntries(e, s).map((x) => x.name);"
+        " return [names(), names({key: 'name', asc: false}), names({key: 'size', asc: false}),"
+        " names({key: 'mtime', asc: false})]; })()"),
+    "next_sort": ("[rb.nextSort({key: 'name', asc: true}, 'name'), rb.nextSort({key: 'name', asc: true}, 'size'),"
+                  " rb.nextSort({key: 'size', asc: false}, 'mtime'), rb.nextSort({key: 'mtime', asc: true}, 'name')]"),
+    "format_when": (
+        "(() => { const now = new Date(2026, 10, 21, 18, 0).getTime(); const s = (...a) => new Date(...a).getTime() / 1000;"
+        " return [rb.formatWhen(s(2026, 10, 21, 9, 5), now), rb.formatWhen(s(2026, 10, 20, 23, 0), now),"
+        " rb.formatWhen(s(2026, 10, 18, 12, 0), now), rb.formatWhen(s(2026, 9, 3, 12, 0), now),"
+        " rb.formatWhen(null, now)]; })()"),
     "match_entries": "rb.matchEntries([{name: 'Alpha'}, {name: 'beta'}, {name: 'alps'}], 'AL').map(e => e.name)",
     "remember_files": (
         "(() => { let l = []; for (const p of ['a', 'b', 'a']) l = rf.rememberFile(l, {path: p, kind: 'dataset'});"
@@ -3195,3 +3208,22 @@ def test_cut_off_text_shows_in_full_on_hover(results):
     assert results["full_text_titles"] == [
         "a very long dataset name", "", "mine", "/some/long/path/file.xyz",
     ]
+
+
+def test_the_file_list_sorts_folders_first_then_by_the_chosen_column(results):
+    assert results["sort_entries"] == [
+        ["Z", "a.xyz", "b.xyz", "c.log"],
+        ["Z", "c.log", "b.xyz", "a.xyz"],
+        ["Z", "a.xyz", "b.xyz", "c.log"],      # same size: by name
+        ["Z", "c.log", "b.xyz", "a.xyz"],
+    ]
+
+
+def test_a_column_clicked_again_turns_round_and_a_new_one_starts_largest_first(results):
+    assert results["next_sort"] == [
+        {"key": "name", "asc": False}, {"key": "size", "asc": False},
+        {"key": "mtime", "asc": False}, {"key": "name", "asc": True}]
+
+
+def test_a_files_date_reads_today_yesterday_days_ago_or_the_date(results):
+    assert results["format_when"] == ["Today 09:05", "Yesterday", "3 days ago", "3 Oct 2026", ""]
