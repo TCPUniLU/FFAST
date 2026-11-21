@@ -181,6 +181,17 @@ def used(root, kind=None):
     return sum(e.bytes for e in entries(root) if kind in (None, e.kind))
 
 
+def allowance(root, free):
+    """The most the whole parsed cache under ``root`` may hold: the budget's
+    parsed limit, and no more than leaves ``budget().keep_free`` bytes of the
+    disk free. ``free`` is the disk's free space now; what the cache holds
+    already counts as room, since other datasets give way (ADR 0112)."""
+    from ffast.io.budget import budget
+
+    owner = budget()
+    return min(owner.parsed_limit, used(root) + max(0, free - owner.keep_free))
+
+
 def _group(root, ents, pins):
     groups = {}
     for e in ents:

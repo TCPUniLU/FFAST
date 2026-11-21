@@ -80,8 +80,13 @@ class Budget:
         self.parsed_limit = int(
             parsed_bytes
             if parsed_bytes is not None
-            else _setting("FFAST_PARSED_CACHE_BYTES", 20 * GiB)
+            else _setting("FFAST_PARSED_CACHE_BYTES", 100 * GiB)
         )
+        # The parsed cache may grow until this much of its disk would be
+        # left free. A quarter of free disk kept the forces of an 83 GB file
+        # (22 GB) out on a laptop with 45 GB free, so every force plot
+        # parsed the text again (ADR 0112).
+        self.keep_free = int(_setting("FFAST_CACHE_KEEP_FREE_BYTES", 20 * GiB))
         self.result_limit = int(
             result_bytes
             if result_bytes is not None

@@ -805,10 +805,8 @@ class IndexedStore:
             with _disk_lock, cache_space.space_lock(self.folder.parent):
                 destination = self.folder / f"{self.identity}.json"
                 old = destination.stat().st_size if destination.exists() else 0
-                limit = min(
-                    budget().parsed_limit,
-                    shutil.disk_usage(self.folder).free // 4,
-                )
+                limit = cache_space.allowance(self.folder.parent,
+                                              shutil.disk_usage(self.folder).free)
                 # The free-space allowance shrinks as batches are written: other
                 # datasets give way, this one is never trimmed (ADR 0108).
                 if not cache_space.make_room(
@@ -924,14 +922,12 @@ class IndexedStore:
                 # Read the allowance once: the scan fills the disk itself, and
                 # a later window must not decide differently because of that.
                 if self._scan_allowance is None:
-                    self._scan_allowance = min(
-                        budget().parsed_limit, shutil.disk_usage(self.folder).free // 4
-                    )
+                    self._scan_allowance = cache_space.allowance(
+                        self.folder.parent, shutil.disk_usage(self.folder).free)
                 limit = self._scan_allowance
             else:
-                limit = min(
-                    budget().parsed_limit, shutil.disk_usage(self.folder).free // 4
-                )
+                limit = cache_space.allowance(
+                    self.folder.parent, shutil.disk_usage(self.folder).free)
             if a >= 0:
                 part = _compact(part)
                 levels = _cache_levels(part)

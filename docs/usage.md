@@ -173,7 +173,7 @@ Set server-wide limits in `ffast.toml` before starting the server, in bytes:
 ```toml
 [resources]
 ram_bytes = 4294967296          # 4 GiB shared by datasets, caches and active work
-parsed_cache_bytes = 21474836480 # 20 GiB; 0 disables parsed disk caching
+parsed_cache_bytes = 107374182400 # 100 GiB (default); 0 disables parsed disk caching
 result_cache_bytes = 21474836480 # 20 GiB; 0 disables result spill
 ```
 
@@ -193,8 +193,11 @@ Environment equivalents are `FFAST_MEMORY_BYTES`, `FFAST_PARSED_CACHE_BYTES`
 and `FFAST_RESULT_CACHE_BYTES`; explicit project settings take precedence.
 Parsed data defaults to `~/.ffast/frame-arrays` (`FFAST_FRAME_ARRAYS_DIR`);
 result files default to its `results` folder (`FFAST_RESULT_CACHE_DIR`). Use
-disk storage for result spill. Both disk budgets default to 20 GiB; available
-disk space can impose a smaller limit.
+disk storage for result spill. The parsed cache may use up to 100 GiB, and
+grows only until 20 GiB of its disk would be left free
+(`FFAST_CACHE_KEEP_FREE_BYTES`); it keeps per-frame values first, then forces,
+then positions. The result budget defaults to 20 GiB; available disk space can
+impose a smaller limit.
 
 The CLI accepts `ffast-cli metrics run … --memory-mode saving`. Other formats
 retain their current readers; this does not add HDF5 or TensorFlow Datasets

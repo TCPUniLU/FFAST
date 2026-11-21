@@ -34,17 +34,17 @@ _META = "meta.json"
 
 
 def max_bytes(folder):
-    """The most the whole-array entries may hold: at most MAX_BYTES and the
-    parsed disk limit minus the batches (both share that budget), and at most
-    a quarter of the disk's free space."""
+    """The most the whole-array entries may hold: at most MAX_BYTES, and the
+    parsed cache's allowance minus the batches (both share it): the parsed
+    disk limit, leaving the budget's keep-free bytes of the disk (ADR 0112)."""
     from ffast.io.budget import budget
     maximum = min(MAX_BYTES, budget().parsed_limit)
-    maximum = max(0, maximum - cache_space.used(folder, "batches"))
+    batches = cache_space.used(folder, "batches")
     try:
         free = shutil.disk_usage(folder).free
     except OSError:
-        return maximum
-    return min(maximum, free // 4)
+        return max(0, maximum - batches)
+    return max(0, min(maximum, cache_space.allowance(folder, free)) - batches)
 
 
 def _key(index):

@@ -760,7 +760,10 @@ def test_shrinking_disk_allowance_keeps_the_manifest(tmp_path, small_budget, mon
     manifest = store.folder / f"{store.identity}.json"
     manifest.unlink()
     used = sum(p.stat().st_size for p in store.folder.iterdir() if p.is_file())
-    monkeypatch.setattr(indexed.shutil, "disk_usage", lambda path: SimpleNamespace(free=4 * (used - 1024)))
+    # Free disk 1 KiB short of the keep-free amount: the allowance is
+    # 1 KiB less than the cache holds (ADR 0112).
+    monkeypatch.setattr(indexed.shutil, "disk_usage",
+                        lambda path: SimpleNamespace(free=small_budget.keep_free - 1024))
     store._save_manifest()
     assert manifest.is_file()
     small_budget.cache.clear()
@@ -1343,3 +1346,49 @@ def test_no_file_stays_open_after_cache_reads(
         gc.collect()
     for a, b in store.ranges:                # nothing holds a batch file
         store._cache_path(a, b).unlink()
+
+
+@pytest.mark.parametrize("spare, level", [(3.5 * 2**20, 3), (2 * 2**20, 2)])
+def test_the_parsed_cache_keeps_what_leaves_the_keep_free_amount(
+        tmp_path, small_budget, monkeypatch, spare, level):
+    """The cache may grow until ``keep_free`` bytes of the disk would be left
+    (ADR 0112). With 3.5 MiB to spare, forces and positions (2.9 MB) are
+    kept; with 2 MiB the forces (1.4 MB) still fit, the positions do not.
+    The old rule, a quarter of free disk (1.1 and 0.75 MiB), kept neither."""
+    from ffast.io import frame_cache
+    from ffast.readers import indexed
+    from types import SimpleNamespace
+
+    small_budget.limit = 8 * 2**20
+    small_budget.parsed_limit = 2**30
+    small_budget.keep_free = 2**20
+    monkeypatch.setattr(frame_cache, "CACHE_DIR", tmp_path / "parsed")
+    from ffast.io import cache_space
+
+    # A disk whose free space shrinks as the cache writes, as a real one.
+    root = tmp_path / "parsed"
+    monkeypatch.setattr(indexed.shutil, "disk_usage", lambda path: SimpleNamespace(
+        free=small_budget.keep_free + spare - (cache_space.used(root) if root.exists() else 0)))
+    path = write_xyz(tmp_path / "keep-free.xyz", n=1500)
+    chunks.read_arrays(XyzReader, path, memory_mode="saving", workers=1)
+    import zipfile
+
+    # Frame windows only: the "-1--1" batch holds per-frame values alone.
+    batches = [b for b in (tmp_path / "parsed" / "batches").glob("*.npz")
+               if not b.name.endswith("--1--1.npz")]
+    assert batches
+    for batch in batches:
+        names = set(zipfile.ZipFile(batch).namelist())
+        assert any(n.startswith("forces:") for n in names)
+        assert any(n.startswith("positions") for n in names) == (level == 3)
+
+
+def test_the_allowance_leaves_the_keep_free_amount(tmp_path, small_budget, monkeypatch):
+    from ffast.io import cache_space
+
+    small_budget.parsed_limit = 100
+    small_budget.keep_free = 1000
+    monkeypatch.setattr(cache_space, "used", lambda root, kind=None: 30)
+    assert cache_space.allowance(tmp_path, 1050) == 80      # what it holds + 50 spare
+    assert cache_space.allowance(tmp_path, 5000) == 100     # never past the parsed limit
+    assert cache_space.allowance(tmp_path, 900) == 30       # short of keep-free: no growth
