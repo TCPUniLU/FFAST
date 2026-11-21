@@ -1034,6 +1034,8 @@ CASES = {
     "filter_key": ("[rb.filterKey('', {key: 'b'}), rb.filterKey('be', {key: 'a'}), rb.filterKey('be', {key: 'Backspace'}),"
                    " rb.filterKey('', {key: 'Backspace'}), rb.filterKey('be', {key: 'Escape'}), rb.filterKey('', {key: 'Escape'}),"
                    " rb.filterKey('', {key: ' '}), rb.filterKey('', {key: 'ArrowDown'}), rb.filterKey('', {key: 'a', metaKey: true})]"),
+    "crumbs_of": "[rb.crumbsOf('/scratch/a/run'), rb.crumbsOf('/'), rb.crumbsOf('C:\\\\data'), rb.crumbsOf(null)]",
+    "toggle_pin": "[rf.togglePin([], '/a'), rf.togglePin(['/a', '/b'], '/a'), rf.togglePin(['/a'], '/b')]",
     "match_entries": "rb.matchEntries([{name: 'Alpha'}, {name: 'beta'}, {name: 'alps'}], 'AL').map(e => e.name)",
     "remember_files": (
         "(() => { let l = []; for (const p of ['a', 'b', 'a']) l = rf.rememberFile(l, {path: p, kind: 'dataset'});"
@@ -3245,3 +3247,14 @@ def test_only_plainly_other_files_look_unreadable(results):
 def test_typing_on_the_file_list_narrows_it_to_names_containing_the_text(results):
     assert results["filter_entries"] == [["bead_00.xyz", "BEAD_01.xyz"], 1]
     assert results["filter_key"] == ["b", "bea", "b", None, "", None, None, None, None]
+
+
+def test_a_posix_path_splits_into_folders_to_click(results):
+    assert results["crumbs_of"] == [
+        [{"name": "/", "path": "/"}, {"name": "scratch", "path": "/scratch"},
+         {"name": "a", "path": "/scratch/a"}, {"name": "run", "path": "/scratch/a/run"}],
+        [{"name": "/", "path": "/"}], None, None]
+
+
+def test_pinning_a_pinned_folder_unpins_it(results):
+    assert results["toggle_pin"] == [["/a"], ["/b"], ["/a", "/b"]]

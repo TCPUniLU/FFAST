@@ -21,7 +21,7 @@ import { trapFocus } from './dialogs.js';
 import { UNIT_PLACEHOLDER } from './units.js';
 import { loadRecentUnits, saveRecentUnit, unitChoices } from './recent_units.js';
 import { withExtension, EXPORT_FORMATS, exportPlan } from './session_ops.js';
-import { loadRecentFiles, rememberFile, saveRecentFiles } from './recent_files.js';
+import { loadPins, loadRecentFiles, rememberFile, savePins, saveRecentFiles, togglePin } from './recent_files.js';
 import { setBusyText } from './spinner.js';
 
 /** Join a server-side directory and an entry name. Posix separators: the paths
@@ -144,6 +144,16 @@ export function filterKey(text, { key, ctrlKey = false, metaKey = false, altKey 
   }
   if (key.length === 1 && key !== ' ') return text + key;
   return null;
+}
+
+/** The pieces of a server path to click: `/a/b` → `/`, `a`, `b`, each with
+ * the folder it opens. Null for a path that is not Posix (a Windows
+ * server's), which the text box alone shows. */
+export function crumbsOf(path) {
+  if (typeof path !== 'string' || !path.startsWith('/')) return null;
+  const parts = path.split('/').filter(Boolean);
+  return [{ name: '/', path: '/' },
+    ...parts.map((name, i) => ({ name, path: '/' + parts.slice(0, i + 1).join('/') }))];
 }
 
 /** When a file changed, short: "Today 14:05", "Yesterday", "3 days ago",
@@ -534,6 +544,20 @@ export class RemoteBrowser {
       this._askSuggestions();
     });
     $('fb-path').addEventListener('blur', () => setTimeout(() => this._hideSuggestions(), 150));
+    // The path shows as folders to click; a click beside them types it.
+    $('fb-crumbs').addEventListener('click', (e) => {
+      const crumb = e.target.closest('[data-path]');
+      if (crumb) this._navigate(crumb.dataset.path);
+      else { $('fb-path').focus(); $('fb-path').select(); }
+    });
+    $('fb-place-home').addEventListener('click', () => this._navigate(this._home || null));
+    $('fb-place-start').addEventListener('click', () => this._navigate(null));
+    $('fb-pin').addEventListener('click', () => {
+      if (!this._path) return;
+      const server = this._ports.serverKey?.() || '';
+      savePins(server, togglePin(loadPins(server), this._path));
+      this._renderSide();
+    });
     // Click a column name to order the list by it; again to turn it round.
     for (const head of document.querySelectorAll('#fb-cols [data-sort]')) {
       head.addEventListener('click', () => {
@@ -710,11 +734,81 @@ export class RemoteBrowser {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'fb-recent-row';
-      row.textContent = e.path;
+      const text = document.createElement('span');   // ltr inside an rtl row: "…" goes at the start
+      text.dir = 'ltr';
+      text.textContent = e.path;
+      row.append(text);
       row.title = e.path;
       row.addEventListener('click', () => this._useRecent(e.path));
       return row;
     }));
+  }
+
+  /** The side list: Home and the start folder, the pinned folders (the one
+   * on screen marked), and whether this folder can be pinned. */
+  _renderSide() {
+    const server = this._ports.serverKey?.() || '';
+    const pins = loadPins(server);
+    $('fb-pins').replaceChildren(...pins.map((path) => {
+      const row = document.createElement('div');
+      row.className = 'fb-place fb-pin-row';
+      row.classList.toggle('on', path === this._path);
+      row.title = path;
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'fb-place-go';
+      go.textContent = baseName(path) || path;
+      go.addEventListener('click', () => this._navigate(path));
+      const unpin = document.createElement('button');
+      unpin.type = 'button';
+      unpin.className = 'fb-unpin';
+      unpin.textContent = '×';
+      unpin.title = `Unpin ${path}`;
+      unpin.setAttribute('aria-label', `Unpin ${baseName(path) || path}`);
+      unpin.addEventListener('click', () => {
+        savePins(server, togglePin(loadPins(server), path));
+        this._renderSide();
+      });
+      row.append(go, unpin);
+      return row;
+    }));
+    $('fb-pins-head').hidden = !pins.length;
+    const pinned = pins.includes(this._path);
+    $('fb-pin').disabled = !this._path || pinned;
+    $('fb-pin').textContent = pinned ? '★ Pinned' : '＋ Pin this folder';
+    $('fb-place-home').classList.toggle('on', !!this._home && this._path === this._home);
+  }
+
+  /** The folder on screen as pieces to click (crumbsOf). */
+  _renderCrumbs() {
+    const crumbs = crumbsOf(this._path);
+    const box = $('fb-crumbs');
+    box.hidden = !crumbs;
+    if (!crumbs) return;
+    const pieces = [];
+    crumbs.forEach((c, i) => {
+      if (i > 1) {
+        const sep = document.createElement('span');
+        sep.className = 'fb-crumb-sep';
+        sep.textContent = '›';
+        pieces.push(sep);
+      }
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'fb-crumb';
+      b.dataset.path = c.path;
+      b.textContent = c.name;
+      if (i === crumbs.length - 1) b.setAttribute('aria-current', 'location');
+      pieces.push(b);
+    });
+    // Room to click after the last folder, however long the path: it types the path.
+    const gap = document.createElement('span');
+    gap.className = 'fb-crumb-gap';
+    gap.title = 'Click to type a path';
+    pieces.push(gap);
+    box.replaceChildren(...pieces);
+    // The last folder stays in sight when the path is longer than the box.
+    box.scrollLeft = box.scrollWidth;
   }
 
   /** Fill the box with a recent file. A dataset loads at once, with the
@@ -972,6 +1066,8 @@ export class RemoteBrowser {
     // next Enter goes there, not to the folder that just arrived.
     if (!this._typedSinceAsk) $('fb-path').value = kw.path || '';
     $('fb-up').disabled = !kw.parent;
+    this._renderCrumbs();
+    this._renderSide();
     this._render(kw.entries || []);
     this._refreshLoadEnabled();   // in a pick mode the folder on screen enables the button
     if (this.mode() !== null) this._signal('folder-listed', { mode: this._mode, path: this._path });

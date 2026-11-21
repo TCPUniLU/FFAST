@@ -38,3 +38,38 @@ export function saveRecentFiles(server, list) {
     // Private window or blocked site data: the list is a convenience only.
   }
 }
+
+// ── pinned folders ─────────────────────────────────────────────────────────
+// Folders the user pinned in the loader's side list, per server like the
+// recent files (a laptop folder means nothing on a cluster).
+
+const PIN_KEY = 'ffast.pinnedFolders';
+export const MAX_PINS = 20;
+
+/** `list` with `path` pinned (at the end) or, when it is there, unpinned. */
+export function togglePin(list, path) {
+  return list.includes(path) ? list.filter((p) => p !== path) : [...list, path].slice(-MAX_PINS);
+}
+
+function readPins() {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(PIN_KEY) || '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The folders pinned on `server`, or [] when storage is blocked or empty. */
+export function loadPins(server) {
+  const list = readPins()[server];
+  return Array.isArray(list) ? list.filter((p) => typeof p === 'string').slice(-MAX_PINS) : [];
+}
+
+export function savePins(server, list) {
+  try {
+    window.localStorage.setItem(PIN_KEY, JSON.stringify({ ...readPins(), [server]: list }));
+  } catch {
+    // Private window or blocked site data: pins are a convenience only.
+  }
+}

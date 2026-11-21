@@ -510,3 +510,50 @@ async def test_web_typing_on_the_file_list_narrows_it(ffast_web_server, tmp_path
             await expect(page.locator("#fb-list .fb-row.selected .name")).to_have_text("run.h5")
         finally:
             await browser.close()
+
+
+async def test_web_the_loader_pins_folders_and_shows_the_path_as_folders_to_click(ffast_web_server, tmp_path):
+    """The path shows as folders: one click opens a folder above, a click
+    beside them types the path. "Pin this folder" adds it to the side list,
+    which is kept for the next opening; × unpins it."""
+    (tmp_path / "runs" / "md_03").mkdir(parents=True)
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 900})
+        crumbs = page.locator("#fb-crumbs")
+        pins = page.locator("#fb-pins .fb-pin-row")
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await _go_to(page, tmp_path / "runs" / "md_03")
+            await page.locator("#fb-list").focus()               # the box gives way to the folders
+            await expect(crumbs).to_be_visible()
+            await expect(crumbs.locator(".fb-crumb").last).to_have_text("md_03")
+            await crumbs.locator(".fb-crumb", has_text="runs").click()
+            await expect(page.locator("#fb-path")).to_have_value(str(tmp_path / "runs"))
+
+            await page.locator("#fb-pin").click()
+            await expect(pins).to_have_count(1)
+            await expect(pins.first).to_have_class(re.compile(r"\bon\b"))
+            await expect(page.locator("#fb-pin")).to_be_disabled()
+            await page.locator("#fb-list .fb-row", has_text="md_03").click()
+            await expect(page.locator("#fb-path")).to_have_value(str(tmp_path / "runs" / "md_03"))
+            await expect(page.locator("#fb-pin")).to_be_enabled()
+
+            await page.locator("#fb-cancel").click()
+            await _file_menu(page, "Load Dataset…")
+            await expect(pins).to_have_count(1)
+            await pins.first.locator(".fb-place-go").click()
+            await expect(page.locator("#fb-path")).to_have_value(str(tmp_path / "runs"))
+            await pins.first.hover()
+            await pins.first.locator(".fb-unpin").click()
+            await expect(pins).to_have_count(0)
+
+            await crumbs.locator(".fb-crumb-gap").click()        # after the folders: type the path
+            await expect(page.locator("#fb-path")).to_be_focused()
+            await expect(crumbs).to_be_hidden()
+        finally:
+            await browser.close()
