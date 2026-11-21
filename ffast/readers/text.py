@@ -273,11 +273,11 @@ def _kept_load(reader_class, path, step):
     if handle is None:
         return None
     try:
-        arrays = {key: np.load(entry / file, mmap_mode="r", allow_pickle=False)
-                  for key, file in meta["arrays"].items()}
+        arrays = _read_kept(entry, meta["arrays"])
     except (OSError, ValueError, KeyError):
         handle.close()
         return None
+    _seal(arrays, meta.get("digests") or {})
     # The lock lasts as long as any of the arrays is alive (a dict cannot be
     # weakly referenced, its arrays can).
     alive = [len(arrays)]
@@ -294,7 +294,51 @@ def _kept_load(reader_class, path, step):
     return arrays, int(meta["n_file_frames"])
 
 
+def _read_kept(entry, files):
+    """Each kept array read whole into memory, several files at once. Not a
+    memory map: on a network file system the map read its pages one fault at
+    a time, and reopening a 23 GB copy on MeluXina's Lustre took longer than
+    parsing the text again (2026-11-21)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def read(file):
+        return np.load(entry / file, allow_pickle=False)
+    with ThreadPoolExecutor(max_workers=max(1, min(8, len(files)))) as pool:
+        return dict(zip(files, pool.map(read, files.values())))
+
+
+def _seal(arrays, digests):
+    """Make kept arrays read-only, as the kept copy is, and give the
+    fingerprint code the digests stored with the copy."""
+    from ffast.cache import fingerprint
+    for key, value in arrays.items():
+        if isinstance(value, np.ndarray):
+            value.flags.writeable = False
+            owner = fingerprint._owner(value)
+            if owner.flags.writeable:
+                owner.flags.writeable = False
+            if key in digests:
+                fingerprint.remember_digest(value, digests[key])
+
+
+def _write_kept(folder, files, arrays):
+    """Write each array to its file and take its column digest, several
+    arrays at once (writing and hashing both let go of the GIL)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from ffast.cache import fingerprint
+
+    def one(key):
+        value = np.asarray(arrays[key])
+        np.save(folder / files[key], value, allow_pickle=False)
+        return fingerprint.array_digest(value)
+    with ThreadPoolExecutor(max_workers=max(1, min(8, len(files)))) as pool:
+        return dict(zip(files, pool.map(one, files)))
+
+
 def _kept_save(reader_class, path, step, arrays, n_file_frames):
+    """Keep ``arrays`` for the next load. The column digest of each array,
+    or None when nothing was kept."""
     name = os.path.basename(path)
     tmp = None
     try:
@@ -316,19 +360,19 @@ def _kept_save(reader_class, path, step, arrays, n_file_frames):
         tmp = folder / f".{entry.name}.{os.getpid()}.tmp"
         shutil.rmtree(tmp, ignore_errors=True)
         tmp.mkdir()
-        files = {}
-        for i, (key, value) in enumerate(arrays.items()):
-            files[key] = f"a{i}.npy"
-            np.save(tmp / files[key], np.asarray(value), allow_pickle=False)
+        files = {key: f"a{i}.npy" for i, key in enumerate(arrays)}
+        digests = _write_kept(tmp, files, arrays)
         (tmp / _META).write_text(json.dumps({
             "path": source, "reader": reader_class.name, "step": step,
-            "n_file_frames": n_file_frames, "arrays": files}))   # last: no meta, never opened
+            "n_file_frames": n_file_frames, "arrays": files,
+            "digests": digests}))                            # last: no meta, never opened
         with cache_space.space_lock(folder):
             if cache_space.is_open(entry / cache_space.OPEN):
                 shutil.rmtree(tmp, ignore_errors=True)       # the same copy is open: keep it
             else:
                 shutil.rmtree(entry, ignore_errors=True)
                 os.replace(tmp, entry)
+        return digests
     except Exception as exc:
         logger.warning("Could not keep the arrays of %s for the next load: %s", name, exc,
                        extra={"popup": False})
@@ -596,10 +640,11 @@ def _read_full(reader_class, path, contents, frames, n_file, starts, counts, use
                               progress, workers, batch)
 
     if use_cache and step is not None:
-        _kept_save(reader_class, path, step, arrays, n_file)
-        kept = _kept_load(reader_class, path, step)   # None: not kept, or cannot be opened
-        if kept is not None:
-            arrays = kept[0]
+        digests = _kept_save(reader_class, path, step, arrays, n_file)
+        if digests is not None:
+            # The arrays in memory stay in use, read-only like the copy, with
+            # its digests (a reopen of the copy gives the same).
+            _seal(arrays, digests)
     if reader_class.name == "xyz":
         for value in arrays.values():
             budget().retain(value)

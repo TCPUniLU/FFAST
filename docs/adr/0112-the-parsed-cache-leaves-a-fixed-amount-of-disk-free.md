@@ -38,6 +38,20 @@ own cap was 20 GiB at first; it is 100 GiB since 2026-11-21, the same as the
 parsed cache. On a MeluXina node (503 GB RAM) a 48 GB file is read whole, its
 arrays were 22.4 GB, and every reopen parsed the text again (42 s).
 
+Kept that way, the 23 GB copy made things slower on Lustre: reopen load
+46.5 s, Basic Errors 38 s instead of 17 s, first open 115 s instead of 68 s.
+The copy was memory-mapped (ADR 0083, decision 9), so every first touch (the
+fingerprint hash, the predictions, the metrics) read it page by page from the
+network disk, and the first open switched to that mapped copy right after
+writing it. Since 2026-11-21:
+
+- a reopen reads the kept arrays whole into memory, several files at once
+  (the load already passed the memory check that a parse would need);
+- the first open keeps using the arrays it parsed;
+- the copy stores each array's column digest (`meta.json` `digests`), and the
+  fingerprint code takes a read-only array's digest from there instead of
+  hashing it again. Copies written before have no digests and are hashed.
+
 On the laptop above the allowance is about 25 GiB: the forces are kept.
 
 ## Alternatives

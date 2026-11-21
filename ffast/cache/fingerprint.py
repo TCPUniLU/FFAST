@@ -23,6 +23,7 @@ bytes and different row shapes may give the same digest. The callers keep
 those apart, as they did with md5.
 """
 import hashlib
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -130,11 +131,68 @@ def column_digest_of_chunks(chunk_digests):
     return column.hexdigest()
 
 
+# Digests already known for read-only arrays: a parsed cache copy stores them,
+# so a reopen does not hash 23 GB again (ADR 0112, 2026-11-21). Keyed by the
+# array that owns the memory (by id: arrays cannot be dict keys); an entry is
+# dropped when that array is freed. Only read-only memory is remembered:
+# nothing can change it after its digest is taken.
+_known = {}
+
+
+def _owner(array):
+    base = array
+    while isinstance(base.base, np.ndarray):
+        base = base.base
+    return base
+
+
+def _known_key(array):
+    """``(owner, key)`` when ``array``'s digest may be remembered, else None:
+    read-only, contiguous, and its owner read-only too."""
+    if array.flags.writeable or not array.flags.c_contiguous:
+        return None
+    owner = _owner(array)
+    if owner.flags.writeable:
+        return None
+    rows = array.shape[0] if array.ndim else 1
+    return owner, (array.__array_interface__["data"][0], array.nbytes, array.dtype.str, rows)
+
+
+def remember_digest(array, digest):
+    """Record ``digest`` as ``array``'s column digest; ignored unless the
+    array is read-only (see ``_known``)."""
+    found = _known_key(np.asarray(array))
+    if found is None:
+        return
+    owner, key = found
+    entry = _known.get(id(owner))
+    if entry is None:
+        try:
+            weakref.finalize(owner, _known.pop, id(owner), None)
+        except TypeError:                     # cannot be weakly referenced: id could be reused
+            return
+        entry = _known[id(owner)] = {}
+    entry[key] = digest
+
+
 def array_digest(array):
     """The column digest of a whole array; rows are its first axis. Large
     arrays hash their chunks on up to four threads (``hashlib`` lets go of the
-    GIL for big buffers); the result equals one ``ChunkHasher``."""
+    GIL for big buffers); the result equals one ``ChunkHasher``. A read-only
+    array's digest is remembered (``remember_digest``)."""
     array = np.asarray(array)
+    found = _known_key(array)
+    if found is not None:
+        known = _known.get(id(found[0]), {}).get(found[1])
+        if known is not None:
+            return known
+    digest = _hash_array(array)
+    if found is not None:
+        remember_digest(array, digest)
+    return digest
+
+
+def _hash_array(array):
     if array.ndim == 0:
         array = array.reshape(1)
     n = array.shape[0]
