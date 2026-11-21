@@ -29,12 +29,14 @@ CACHE_DIR = Path(os.environ.get("FFAST_FRAME_ARRAYS_DIR", "~/.ffast/frame-arrays
 # Bump when the reader changes the arrays it makes: older entries are then
 # never opened, and leave as the oldest.
 FORMAT = 1
-MAX_BYTES = 20 * 2**30
+# The parsed cache's own cap (ADR 0112): a 48 GB file on a cluster node made
+# 22.4 GB of arrays, above the old 20 GiB, and every reopen parsed it again.
+MAX_BYTES = 100 * 2**30
 _META = "meta.json"
 
 
 def max_bytes(folder):
-    """The most the whole-array entries may hold: at most MAX_BYTES, and the
+    """The most the whole-array entries may hold: at most MAX_BYTES (100 GiB), and the
     parsed cache's allowance minus the batches (both share it): the parsed
     disk limit, leaving the budget's keep-free bytes of the disk (ADR 0112)."""
     from ffast.io.budget import budget

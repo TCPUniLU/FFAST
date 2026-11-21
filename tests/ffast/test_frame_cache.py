@@ -102,6 +102,20 @@ def test_an_entry_open_in_this_process_is_not_evicted_by_a_later_save(tmp_path, 
     assert len(reads) == 3                                # a, b's size, b: a was not read again
 
 
+def test_whole_arrays_may_use_the_parsed_cache_limit_on_a_big_disk(tmp_path, monkeypatch):
+    """A 48 GB file on MeluXina made 22.4 GB of arrays; a 20 GiB cap of their
+    own made every reopen parse the text again (2026-11-21)."""
+    from collections import namedtuple
+
+    from ffast.io import budget as budget_module
+    monkeypatch.delenv("FFAST_PARSED_CACHE_BYTES", raising=False)
+    monkeypatch.delenv("FFAST_CACHE_KEEP_FREE_BYTES", raising=False)
+    monkeypatch.setattr(budget_module, "_budget", None)
+    usage = namedtuple("usage", "total used free")
+    monkeypatch.setattr(frame_cache.shutil, "disk_usage", lambda _: usage(5 << 40, 0, 4 << 40))
+    assert frame_cache.max_bytes(tmp_path) == budget_module.budget().parsed_limit == 100 * 2**30
+
+
 def test_a_broken_entry_is_read_again(tmp_path, reads):
     path = _write(tmp_path)
     _load(path)

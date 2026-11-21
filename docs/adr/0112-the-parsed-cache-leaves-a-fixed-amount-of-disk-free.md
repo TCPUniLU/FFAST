@@ -33,8 +33,10 @@ smaller of the cap and what the cache holds now plus the free space beyond
 way, oldest last use first (ADR 0108); pinned and open ones do not, and a
 batch that then does not fit is not written and is read from the source.
 The scan reads the allowance once (ADR 0107), as before; the manifest and
-the whole-array entries (`frame_cache.max_bytes`, still at most 20 GiB of
-their own) use the same rule.
+the whole-array entries (`frame_cache.max_bytes`) use the same rule. Their
+own cap was 20 GiB at first; it is 100 GiB since 2026-11-21, the same as the
+parsed cache. On a MeluXina node (503 GB RAM) a 48 GB file is read whole, its
+arrays were 22.4 GB, and every reopen parsed the text again (42 s).
 
 On the laptop above the allowance is about 25 GiB: the forces are kept.
 
