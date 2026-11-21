@@ -72,10 +72,14 @@ class DatasetRegistry:
         computed for the old one is announced stale with ``OBJECT_REPLACED``.
         Datasets cut from the old one read their frames through it, so they
         are moved onto the new one and announced stale too (their own
-        fingerprints are made from the parent's, so they stay the same)."""
+        fingerprints are made from the parent's, so they stay the same).
+        The units the user named belong to those same numbers, so the new one
+        keeps them."""
         old = self._datasets.get(dataset.fingerprint)
         self._datasets[dataset.fingerprint] = dataset
         if old is not None and old is not dataset:
+            if not getattr(dataset, "units", None) and getattr(old, "units", None):
+                dataset.units = dict(old.units)
             for ds in self._datasets.values():
                 if getattr(ds, "parent", None) is old:
                     ds.parent = dataset

@@ -1372,6 +1372,8 @@ export class RemoteBrowser {
     if (kw.already) {
       this._ports.setStatus(`"${load.name}" is already loaded`, 'connected');
       if (load.path) this._remember(load.path, load.kind);
+      // Units typed in the loader still name the dataset that is there.
+      if (kw.fingerprint) this._nameUnits(load, kw.fingerprint);
       this._signal('load-duplicate', { kind: load.kind, name: load.name });
       this._end(load);
       return;
@@ -1392,15 +1394,18 @@ export class RemoteBrowser {
 
   _finish(load) {
     if (load.path) this._remember(load.path, load.kind);
-    // The units typed in the loader are named on the dataset that arrived.
-    if (load.kind === 'dataset') {
-      for (const [dimension, unit] of Object.entries(load.units || {})) {
-        this._ports.setUnit?.(load.fp, dimension, unit);
-        saveRecentUnit(dimension, unit);
-      }
-    }
+    this._nameUnits(load, load.fp);
     this._end(load);
     this._ports.loaded?.(load.kind, load.fp, load.name);
+  }
+
+  /** The units typed in the loader are named on dataset `fp`. */
+  _nameUnits(load, fp) {
+    if (load.kind !== 'dataset') return;
+    for (const [dimension, unit] of Object.entries(load.units || {})) {
+      this._ports.setUnit?.(fp, dimension, unit);
+      saveRecentUnit(dimension, unit);
+    }
   }
 
   _loadFailed(load, err) {

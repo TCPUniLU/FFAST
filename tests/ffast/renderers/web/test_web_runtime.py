@@ -1771,6 +1771,55 @@ async def test_web_the_colourbar_names_the_unit_of_a_force_colouring(ffast_web_s
             await browser.close()
 
 
+async def test_web_a_force_unit_named_at_load_shows_on_the_colourbar(ffast_web_server):
+    """A force unit typed in the Load Dataset dialog is the one the colourbar
+    of a force colouring shows, not "[unit]"."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        label = page.locator("#colorbar-label")
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await _go_to_in_browser(page, DATASET_PATH.parent)
+            await page.locator("#fb-list .fb-row", has_text=DATASET_PATH.name).click()
+            await page.locator("#fb-force-unit").fill("eV/Å")
+            await page.locator("#fb-load").click()
+            await page.wait_for_function(
+                "() => [...window.ffastApp._datasets.values()].some((m) => m.units && m.units.force === 'eV/Å')",
+                timeout=30000)
+            dataset_fp = await page.evaluate("() => [...window.ffastApp._datasets.keys()][0]")
+            ws = await _connect_headless_client(ws_port)
+            try:
+                await ws.send(pack("LOAD_PREDICTION", (str(PREDICTION_PATH), dataset_fp), {
+                    "selected_energy_key": "MACE_energy", "selected_force_key": "MACE_forces"}))
+                model_fp = (await _wait_for_event(ws, "REMOTE_MODEL_META", timeout=30))["args"][0]
+            finally:
+                await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+                await ws.close()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await expect(label).to_have_text(re.compile(r"\(eV/Å\)$"), timeout=15000)
+
+            # The same file again, naming the energy unit: the server swaps in
+            # a new copy and says "already loaded"; both units stay.
+            await _file_menu(page, "Load Dataset…")
+            await _go_to_in_browser(page, DATASET_PATH.parent)
+            await page.locator("#fb-list .fb-row", has_text=DATASET_PATH.name).click()
+            await page.locator("#fb-energy-unit").fill("kcal/mol")
+            await page.locator("#fb-load").click()
+            await page.wait_for_function(
+                "(fp) => { const u = window.ffastApp._datasets.get(fp)?.units || {};"
+                " return u.energy === 'kcal/mol' && u.force === 'eV/Å'; }",
+                arg=dataset_fp, timeout=30000)
+            await expect(label).to_have_text(re.compile(r"\(eV/Å\)$"), timeout=15000)
+        finally:
+            await browser.close()
+
+
 async def test_web_publication_style_and_reset(shared_dataset_server):
     """Publication: white background (view and export), orthographic, no axes.
     Reset puts back what the quick styles change."""

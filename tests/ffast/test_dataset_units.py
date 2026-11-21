@@ -156,3 +156,18 @@ def test_a_saved_session_keeps_the_units(tmp_path):
     held = {}
     SessionPersistence(_session_env(held)).load(str(tmp_path / "s"))
     assert held[dataset.fingerprint].getUnits() == {"energy": "eV"}
+
+
+# ── the same file loaded again ──────────────────────────────────────────────
+
+def test_a_dataset_loaded_again_keeps_the_units_named_on_the_one_it_replaces():
+    from ffast.core.dataset_registry import DatasetRegistry
+    registry = DatasetRegistry({}, types.SimpleNamespace(eventPush=lambda *a, **k: None))
+    first = _dataset()
+    registry.add(first)
+    first.setUnit("force", "eV/Å")
+    again = _dataset()
+    assert again.fingerprint == first.fingerprint
+    registry.add(again)
+    assert registry.get(first.fingerprint) is again
+    assert again.getUnits() == {"force": "eV/Å"}
