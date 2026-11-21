@@ -127,6 +127,25 @@ export function looksUnreadable(entry) {
   return entry.name.startsWith('.') || NOT_STRUCTURES.test(entry.name);
 }
 
+/** The entries whose names contain `text`, ignoring case; all for ''. */
+export function filterEntries(entries, text) {
+  const t = String(text || '').toLowerCase();
+  return t ? (entries || []).filter((e) => e.name.toLowerCase().includes(t)) : [...(entries || [])];
+}
+
+/** What a key does to the list's filter (type to narrow the list), or null
+ * when the key is not the filter's: a letter adds itself, Backspace takes the
+ * last one off and Escape clears it (both only while there is a filter). */
+export function filterKey(text, { key, ctrlKey = false, metaKey = false, altKey = false }) {
+  if (ctrlKey || metaKey || altKey || typeof key !== 'string') return null;
+  if (key === 'Escape' || key === 'Backspace') {
+    if (!text) return null;
+    return key === 'Escape' ? '' : text.slice(0, -1);
+  }
+  if (key.length === 1 && key !== ' ') return text + key;
+  return null;
+}
+
 /** When a file changed, short: "Today 14:05", "Yesterday", "3 days ago",
  * else the date ("12 Nov 2026"). `mtime` in seconds, `now` in ms. */
 export function formatWhen(mtime, now = Date.now()) {
@@ -438,6 +457,7 @@ export class RemoteBrowser {
     this._awaiting = new Map();
     this._navSeq = 0;   // the latest navigation: an older listing is not shown
     this._entries = [];   // the folder on screen, as listed
+    this._filter = '';    // typed on the list: only names containing it show
     this._sort = loadSort();
     this._suggest = { items: [], active: -1, dir: '' };
     this._suggestTimer = null;
@@ -538,6 +558,14 @@ export class RemoteBrowser {
 
   /** Arrow keys, Enter, Space and Backspace on a row of the file list (to_fix_v2). */
   _listKey(e) {
+    const typed = filterKey(this._filter, e);
+    if (typed !== null) {
+      e.preventDefault();
+      e.stopPropagation();   // Escape clears the filter, it does not close the dialog
+      this._filter = typed;
+      this._drawList({ focus: true });
+      return;
+    }
     const row = e.target.closest('.fb-row');
     if (!row) return;
     const rows = [...$('fb-list').querySelectorAll('.fb-row')];
@@ -1281,6 +1309,7 @@ export class RemoteBrowser {
 
   _navigate(path) {
     this._typedSinceAsk = false;
+    this._filter = '';
     this._selected = null;
     $('fb-load').disabled = true;
     // path travels as a positional arg; server reads args[0]
@@ -1296,7 +1325,7 @@ export class RemoteBrowser {
   }
 
   /** The folder's rows, in the chosen order. */
-  _drawList() {
+  _drawList({ focus = false } = {}) {
     for (const head of document.querySelectorAll('#fb-cols [data-sort]')) {
       const on = head.dataset.sort === this._sort.key;
       head.classList.toggle('on', on);
@@ -1305,8 +1334,19 @@ export class RemoteBrowser {
     }
     const list = $('fb-list');
     const selected = this._selected;
+    const shown = filterEntries(sortEntries(this._entries, this._sort), this._filter);
+    const bar = $('fb-filter');
+    bar.hidden = !this._filter;
+    bar.textContent = this._filter
+      ? `Names containing “${this._filter}” · ${shown.length} of ${this._entries.length} · Esc clears` : '';
     list.innerHTML = '';
-    for (const e of sortEntries(this._entries, this._sort)) {
+    if (this._filter && !shown.length) {
+      const none = document.createElement('div');
+      none.className = 'fb-none';
+      none.textContent = `No names contain “${this._filter}”.`;
+      list.appendChild(none);
+    }
+    for (const e of shown) {
       const row = document.createElement('div');
       row.className = `fb-row ${e.is_dir ? 'dir' : 'file'}`;
       // Dimmed, still choosable: the list of endings is a guess (looksUnreadable).
@@ -1320,7 +1360,13 @@ export class RemoteBrowser {
       icon.innerHTML = drawIcon(e.is_dir ? 'folder' : 'file');
       const name = document.createElement('span');
       name.className = 'name';
-      name.textContent = e.name;
+      const at = this._filter ? e.name.toLowerCase().indexOf(this._filter.toLowerCase()) : -1;
+      if (at < 0) name.textContent = e.name;
+      else {
+        const mark = document.createElement('mark');
+        mark.textContent = e.name.slice(at, at + this._filter.length);
+        name.append(e.name.slice(0, at), mark, e.name.slice(at + this._filter.length));
+      }
       const size = document.createElement('span');
       size.className = 'size';
       size.textContent = e.is_dir ? '' : formatSize(e.size);
@@ -1344,6 +1390,9 @@ export class RemoteBrowser {
       }
       list.appendChild(row);
     }
+    // Typing on the list keeps the keyboard there: on the first row left, or
+    // on the list itself when none is.
+    if (focus) (list.querySelector('.fb-row') || list).focus();
     // A fresh dialog opens with the first row focused, so the keyboard can pick.
     if (this._focusFirstRow) {
       this._focusFirstRow = false;

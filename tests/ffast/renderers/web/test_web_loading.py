@@ -471,3 +471,42 @@ async def test_web_plainly_other_files_are_dimmed_but_choosable(ffast_web_server
             await expect(png).not_to_have_class(re.compile(r"\bother\b"))
         finally:
             await browser.close()
+
+
+async def test_web_typing_on_the_file_list_narrows_it(ffast_web_server, tmp_path):
+    """Letters typed on the list keep the names containing them; Backspace
+    takes one off, Escape clears the filter without closing the dialog, and
+    Space on what is left chooses it."""
+    for name in ["bead_00.xyz", "bead_01.xyz", "run.h5"]:
+        (tmp_path / name).write_text("x")
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 900})
+        names = page.locator("#fb-list .fb-row .name")
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await _go_to(page, tmp_path)
+            await expect(names).to_have_count(3)
+            await page.locator("#fb-list .fb-row").first.focus()
+            await page.keyboard.type("bead")
+            await expect(names).to_have_text(["bead_00.xyz", "bead_01.xyz"])
+            await expect(page.locator("#fb-filter")).to_contain_text("2 of 3")
+            await page.keyboard.type("_01")
+            await expect(names).to_have_text(["bead_01.xyz"])
+            await page.keyboard.press("Backspace")
+            await expect(names).to_have_count(2)
+            await page.keyboard.type("x")
+            await expect(page.locator("#fb-list .fb-none")).to_be_visible()
+            await page.keyboard.press("Escape")
+            await expect(names).to_have_count(3)
+            await expect(page.locator("#fb-modal")).to_be_visible()
+            await expect(page.locator("#fb-filter")).to_be_hidden()
+            await page.keyboard.type("run")
+            await page.keyboard.press("Space")
+            await expect(page.locator("#fb-list .fb-row.selected .name")).to_have_text("run.h5")
+        finally:
+            await browser.close()

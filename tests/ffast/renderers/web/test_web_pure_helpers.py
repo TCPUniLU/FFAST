@@ -1029,6 +1029,11 @@ CASES = {
         "['a.xyz', 'b.extxyz', 'run.h5', 'c.npz', 'OUTCAR', 'md.out', 'db.json', 'a.xyz.gz', 'e.csv',"
         " 'plot.png', 'lammps.log', 'notes.txt', 'in.sh', 'Report.PDF', '.bashrc'].map((name) =>"
         " rb.looksUnreadable({name})).concat([rb.looksUnreadable({name: 'logs.png', is_dir: true})])"),
+    "filter_entries": ("[rb.filterEntries([{name: 'bead_00.xyz'}, {name: 'BEAD_01.xyz'}, {name: 'run.h5'}], 'Bead').map((e) => e.name),"
+                       " rb.filterEntries([{name: 'a'}], '').length]"),
+    "filter_key": ("[rb.filterKey('', {key: 'b'}), rb.filterKey('be', {key: 'a'}), rb.filterKey('be', {key: 'Backspace'}),"
+                   " rb.filterKey('', {key: 'Backspace'}), rb.filterKey('be', {key: 'Escape'}), rb.filterKey('', {key: 'Escape'}),"
+                   " rb.filterKey('', {key: ' '}), rb.filterKey('', {key: 'ArrowDown'}), rb.filterKey('', {key: 'a', metaKey: true})]"),
     "match_entries": "rb.matchEntries([{name: 'Alpha'}, {name: 'beta'}, {name: 'alps'}], 'AL').map(e => e.name)",
     "remember_files": (
         "(() => { let l = []; for (const p of ['a', 'b', 'a']) l = rf.rememberFile(l, {path: p, kind: 'dataset'});"
@@ -3235,3 +3240,8 @@ def test_a_files_date_reads_today_yesterday_days_ago_or_the_date(results):
 
 def test_only_plainly_other_files_look_unreadable(results):
     assert results["looks_unreadable"] == [False] * 9 + [True] * 6 + [False]
+
+
+def test_typing_on_the_file_list_narrows_it_to_names_containing_the_text(results):
+    assert results["filter_entries"] == [["bead_00.xyz", "BEAD_01.xyz"], 1]
+    assert results["filter_key"] == ["b", "bea", "b", None, "", None, None, None, None]

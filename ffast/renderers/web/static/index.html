@@ -1580,6 +1580,11 @@
     .fb-row.dir .name { color: var(--text1); }
     .fb-row.file .name { color: var(--ink-3); }
     .fb-row.other { opacity: 0.45; }
+    #fb-filter { padding: 3px 12px; font-size: var(--fs-s); color: var(--muted); border-bottom: 1px solid var(--line); flex-shrink: 0; }
+    #fb-filter[hidden] { display: none; }
+    #fb-list:focus { outline: none; }
+    .fb-row .name mark { background: none; color: var(--accent); font-weight: 700; }
+    .fb-none { padding: 24px; text-align: center; color: var(--muted); font-size: var(--fs-s); }
     .fb-row.other.selected, .fb-row.other:hover { opacity: 0.8; }
     #fb-suggest {
       position: relative; max-height: 180px; overflow-y: auto; padding: 2px 0;
@@ -1990,7 +1995,8 @@
         <button type="button" class="size" data-sort="size">Size <span class="arrow"></span></button>
         <button type="button" class="when" data-sort="mtime">Modified <span class="arrow"></span></button>
       </div>
-      <div id="fb-list"></div>
+      <div id="fb-filter" role="status" hidden></div>
+      <div id="fb-list" tabindex="-1" aria-label="Files: type to narrow"></div>
       <!-- Which energy/force keys a dataset uses, when its file offers a
            choice. -->
       <div id="fb-keys" hidden>
