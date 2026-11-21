@@ -1149,7 +1149,8 @@ def test_a_full_array_load_refused_for_memory_starts_again_in_saving_mode(
     def refuse(*args, **kwargs):
         raise NotEnoughMemory("free memory fell short")
 
-    monkeypatch.setattr(text, "_read_fast", refuse)
+    monkeypatch.setattr(text, "_read_fast", refuse)                # the two-pass path
+    monkeypatch.setattr(text, "_read_whole_one_pass", refuse)      # the one-read path
     ds = dataset(write_xyz(tmp_path / "late.xyz", n=300))
     assert ds.memory_mode == "saving"
     assert scan_spy == ["one-pass"]

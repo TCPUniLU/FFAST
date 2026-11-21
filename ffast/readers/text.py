@@ -477,14 +477,18 @@ def can_scan_and_read(reader_class, path, *, stride=0, select=None, memory_mode=
 
     In memory-saving mode every full, unsampled XYZ load does, whatever the
     size, and a frame index already on disk does not change that. In auto mode
-    only a file larger than twice the budget does, so that it skips building a
-    frame index; a smaller one is indexed first to decide. Every other reader
+    a file larger than twice the budget does, and so does a smaller one with
+    no frame index yet: it is found and parsed in one read and kept in memory
+    when the first window says it fits (``_read_whole_one_pass``). With an
+    index on disk, the parse is the only read anyway. Every other reader
     keeps its contract.
     """
     from ffast.io.budget import budget
     if memory_mode not in ("auto", "saving") or not _one_pass_possible(reader_class, stride, select):
         return False
-    return memory_mode == "saving" or os.path.getsize(path) > 2 * budget().limit
+    if memory_mode == "saving" or os.path.getsize(path) > 2 * budget().limit:
+        return True
+    return not frame_index.has_cached_or_running_index(path)
 
 
 def _read_one_pass(reader_class, path, contents, progress, workers, use_cache):
@@ -515,6 +519,249 @@ def _read_one_pass(reader_class, path, contents, progress, workers, use_cache):
         return IndexedArrays(store), contents, list(range(len(store.counts))), len(store.counts)
 
 
+# ── one read into memory (2026-11-21) ───────────────────────────────────────
+# A load in memory used to find every frame (one read of the file), then parse
+# them (a second read): on MeluXina's Lustre a 90 GB file spent 45 s finding
+# and 55 s parsing, and the node kept none of it for the second read. Now each
+# window is parsed right after its frames are found, while its text is still in
+# memory, and whether the arrays fit is estimated from the first window.
+WHOLE_WINDOW_BYTES = 128 * 2**20   # text found and parsed at a time (as the memory-saving scan)
+WHOLE_MARGIN = 1.25                # the projected arrays times this must fit the budget
+WHOLE_FIRST_GUESS = 1.05           # the arrays are made this much larger than projected
+
+
+class _DoesNotFit(Exception):
+    """The arrays projected from the first window do not fit the budget."""
+
+
+class _ParseFailed(Exception):
+    """A window's parse failed; carries its error past the frame finder."""
+
+    def __init__(self, error):
+        super().__init__(str(error))
+        self.error = error
+
+
+class _Growing:
+    """Arrays that grow as windows are parsed: made from the first window's
+    projection, enlarged in place when a later window needs more, cut to size
+    at the end. Per-atom forces and fields start as NaN, as in
+    ``_read_fast_arrays``."""
+
+    def __init__(self, contents):
+        self.fields = ([f"forces:{k}" for k in contents.get("forces") or []]
+                       + [f"atom:{k}" for k in contents.get("atom_fields") or []])
+        self.has_cell = bool(contents.get("cell"))
+        self.arrays: dict = {}
+        self.atoms = self.frames = 0           # filled so far
+        self.atom_room = self.frame_room = 0
+
+    def _make(self, key, rows):
+        if key == "numbers":
+            return np.empty(rows, dtype=np.int64)
+        if key in ("positions",) or key.startswith("forces:"):
+            shape = (rows, 3)
+        elif key == "cell":
+            shape = (rows, 3, 3)
+        else:
+            shape = (rows,)
+        return np.empty(shape) if key in ("positions", "cell") else np.full(shape, np.nan)
+
+    def keys(self):
+        return ["numbers", "positions"] + (["cell"] if self.has_cell else []) + self.fields
+
+    def room(self, atoms, frames):
+        """Make room for ``atoms`` more atoms and ``frames`` more frames."""
+        if not self.arrays:
+            self.atom_room, self.frame_room = atoms, frames
+            self.arrays = {k: self._make(k, frames if k == "cell" else atoms) for k in self.keys()}
+            return
+        need_a, need_f = self.atoms + atoms, self.frames + frames
+        if need_a > self.atom_room:
+            self.atom_room = max(need_a, int(self.atom_room * 1.5))
+            for key, value in self.arrays.items():
+                if key != "cell":
+                    self.arrays[key] = self._grow(key, value, self.atom_room, self.atoms)
+        if need_f > self.frame_room:
+            self.frame_room = max(need_f, int(self.frame_room * 1.5))
+            if "cell" in self.arrays:
+                self.arrays["cell"] = self._grow("cell", self.arrays["cell"], self.frame_room,
+                                                 self.frames)
+
+    def _grow(self, key, value, rows, filled):
+        bigger = self._make(key, rows)
+        bigger[:filled] = value[:filled]
+        return bigger
+
+    def add_atom_key(self, key, rows):
+        self.arrays[key] = np.full((self.atom_room,) + rows.shape[1:], np.nan)
+
+    def views(self, atoms, frames):
+        a0, f0 = self.atoms, self.frames
+        return {k: (v[f0:f0 + frames] if k == "cell" else v[a0:a0 + atoms])
+                for k, v in self.arrays.items()}
+
+    def nbytes(self):
+        """Bytes of what is filled so far."""
+        per_atom = sum(v[:1].nbytes for k, v in self.arrays.items() if k != "cell")
+        per_frame = self.arrays["cell"][:1].nbytes if "cell" in self.arrays else 0
+        return self.atoms * per_atom + self.frames * per_frame
+
+    def result(self):
+        """The arrays cut to what was filled (a copy when much room is left over)."""
+        out = {}
+        for key, value in self.arrays.items():
+            rows = self.frames if key == "cell" else self.atoms
+            kept = value[:rows]
+            out[key] = kept.copy() if value.shape[0] > rows * 1.1 + 16 else kept
+        return out
+
+
+def _read_whole_one_pass(reader_class, path, contents, progress, workers, use_cache):
+    """``(arrays, contents, frames, n_file_frames)`` from one read of the file,
+    held in memory; None when the fast parser hands the file over (the
+    caller then takes the usual path). Raises ``_DoesNotFit`` after the first
+    window when the arrays projected from it do not fit the budget."""
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+
+    from ffast.io.budget import budget
+    from ffast.metrics import stop
+    name = os.path.basename(path)
+    if use_cache:
+        kept = _kept_load(reader_class, path, 1)
+        if kept is not None:
+            logger.info("%s: opened the arrays kept from an earlier load", name)
+            if reader_class.name == "xyz":
+                for value in kept[0].values():
+                    budget().retain(value)
+            return kept[0], contents, list(range(kept[1])), kept[1]
+
+    owner = budget()
+    size = os.path.getsize(path)
+    threads = fast_threads() if workers is None else max(1, int(workers))
+    grow = _Growing(contents)
+    values = _Values(0)
+    filled: set = set()
+    counts_seen: list = []
+    reserved = []                           # the budget lease, once the projection is known
+    state = {"text": 0}
+
+    def consume(starts, counts, end):
+        stop.check()
+        n_frames, n_atoms = len(counts), int(np.sum(counts))
+        ends = np.append(starts[1:], end)
+        text_bytes = int(end) - int(starts[0])
+        if not grow.arrays:
+            # First window: a guess at the whole file, refined below.
+            share = size / max(1, text_bytes)
+            grow.room(max(n_atoms, int(n_atoms * share * WHOLE_FIRST_GUESS)),
+                      max(n_frames, int(n_frames * share * WHOLE_FIRST_GUESS)))
+        else:
+            grow.room(n_atoms, n_frames)
+        views = grow.views(n_atoms, n_frames)
+        got = reader_class.parse_into(path, starts.astype(np.uint64), ends.astype(np.uint64),
+                                      np.asarray(counts, dtype=np.int64), grow.frames, views,
+                                      threads) or {}
+        values.add(grow.frames, got)
+        filled.update(got["filled"] if "filled" in got else grow.fields)
+        for key, (rows, column) in (got.get("atom_new") or {}).items():
+            if not per_atom(key):
+                raise ValueError(f"parse_into() gave '{key}' as a new per-atom key")
+            column = np.asarray(column, dtype=np.float64)
+            if key not in grow.arrays:
+                grow.add_atom_key(key, column)
+            grow.arrays[key][grow.atoms + np.asarray(rows, dtype=np.int64)] = column
+            filled.add(key)
+        grow.atoms += n_atoms
+        grow.frames += n_frames
+        counts_seen.append(np.asarray(counts, dtype=np.int64))
+        state["text"] += text_bytes
+        projected = int(grow.nbytes() * size / max(1, state["text"]) * WHOLE_MARGIN)
+        if not reserved:
+            if not owner.fits(projected):
+                raise _DoesNotFit(f"its arrays would need about {_gib(projected)}, more than the "
+                                  f"{_gib(owner.limit - owner.used)} the memory budget has left")
+            reserved.append(owner.reserve(projected))
+            reserved.append(reserved[0].__enter__())
+        left = available_memory()
+        if end < size and left < MEMORY_FLOOR:
+            raise NotEnoughMemory(
+                f"Stopped reading {name} after {grow.frames:,} frames: only {_gib(left)} "
+                f"of memory is left. Close other programs, or load a smaller file.")
+        if progress and callable(getattr(progress, "bytes_read", None)):
+            progress.bytes_read(min(int(end), size), size, grow.frames)
+
+    pending = None
+    try:
+        with _scan_parse_lock, ThreadPoolExecutor(max_workers=1) as parsing:
+            def found(starts, counts, end):
+                nonlocal pending
+                stop.check()
+                if pending is not None:
+                    try:
+                        pending.result()
+                    except BaseException as exc:
+                        raise _ParseFailed(exc) from exc
+                pending = parsing.submit(contextvars.copy_context().run, consume, starts, counts, end)
+
+            logger.info("Reading %s in one pass with the fast parser: %d thread(s)", name, threads)
+            try:
+                index = frame_index.scan(path, on_batch=found, batch_bytes=min(
+                    WHOLE_WINDOW_BYTES, max(1024, owner.limit // 16)))
+            except _ParseFailed as failed:
+                if isinstance(failed.error, NotFast):
+                    return None            # the parser handed the file over: the usual path
+                raise failed.error from None
+            except NotFast:
+                # The frame finder handed the file over: the usual path, which
+                # hands it to the Python parser and its messages.
+                if pending is not None:
+                    try:
+                        pending.result()
+                    except NotFast:
+                        pass
+                return None
+            if pending is not None:
+                try:
+                    pending.result()
+                except NotFast:
+                    return None            # the last window's parser handed the file over
+        total = grow.frames
+        if total == 0:
+            raise ReaderError(f"{name} has no frames")
+        arrays = grow.result()
+        for key in grow.fields:
+            if key not in filled:
+                del arrays[key]
+        arrays["n_atoms"] = np.concatenate(counts_seen)
+        values.frames = total
+        arrays.update(values.result())
+
+        # The frame index of this read serves the next load and frame access.
+        frame_index.save_cached(index)
+        with frame_index._lock:
+            frame_index._memory[os.path.abspath(path)] = index
+        table = (np.asarray(index.starts, dtype=np.int64), np.asarray(index.counts, dtype=np.int64))
+        ident = (index.size, index.mtime_ns)
+        _save_table(reader_class, path, ident, table)
+        with _lock:
+            _tables[(reader_class.name, os.path.abspath(path))] = (ident, table)
+
+        if use_cache:
+            digests = _kept_save(reader_class, path, 1, arrays, total)
+            if digests is not None:
+                _seal(arrays, digests)
+        lease = reserved[1] if reserved else None
+        if reader_class.name == "xyz":
+            for value in arrays.values():
+                owner.retain(value, lease)
+        return arrays, contents, list(range(total)), total
+    finally:
+        if reserved:
+            reserved[0].__exit__(None, None, None)
+
+
 def read_level2(reader_class, path, *, stride=0, select=None, progress=None, workers=None,
                 batch=None, use_cache=True, on_handover=None, memory_mode="auto"):
     """The kept frames of ``path`` through a Level 2 reader: ``(arrays,
@@ -526,7 +773,23 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
     tried_one_pass = False
     if can_scan_and_read(reader_class, path, stride=stride, select=select, memory_mode=memory_mode):
         tried_one_pass = True
-        done = _read_one_pass(reader_class, path, contents, progress, workers, use_cache)
+        from ffast.io.budget import budget
+        done = None
+        if memory_mode == "auto" and os.path.getsize(path) <= 2 * budget().limit:
+            try:
+                done = _read_whole_one_pass(reader_class, path, contents, progress, workers,
+                                            use_cache)
+            except _DoesNotFit as exc:
+                logger.info("%s: %s; reading it in memory-saving mode", name, exc)
+                done = _read_one_pass(reader_class, path, contents, progress, workers, use_cache)
+            except NotEnoughMemory:
+                # Free memory fell short while reading: start again in
+                # memory-saving mode, as the two-pass path does.
+                logger.info("%s: not enough free memory for full arrays; loading in "
+                            "memory-saving mode", name)
+                done = _read_one_pass(reader_class, path, contents, progress, workers, use_cache)
+        else:
+            done = _read_one_pass(reader_class, path, contents, progress, workers, use_cache)
         if done is not None:
             return done
     starts, counts = get_table(reader_class, path)
