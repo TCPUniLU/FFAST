@@ -370,3 +370,37 @@ async def test_web_units_named_with_a_prediction_from_the_same_file_show_on_the_
                 raise AssertionError(f"{exc}\npage state: {seen}") from None
         finally:
             await browser.close()
+
+
+async def test_web_a_file_path_typed_or_pasted_chooses_that_file(ffast_web_server):
+    """Enter on a file's path, or the path pasted into the dialog, lists the
+    file's folder and chooses the file as a click would; a path that does
+    not exist says which part is missing."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 900})
+        chosen = page.locator("#fb-list .fb-row.file.selected .name")
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await _go_to(page, DATASET_PATH)
+            await expect(chosen).to_have_text(DATASET_PATH.name)
+            await expect(page.locator("#fb-path")).to_have_value(str(DATASET_PATH.parent))
+            await expect(page.locator("#fb-load")).to_be_enabled()
+
+            await _go_to(page, REPO_ROOT)
+            await expect(page.locator("#fb-path")).to_have_value(str(REPO_ROOT))
+            await page.locator("#fb-list").evaluate(
+                """(list, text) => { const data = new DataTransfer(); data.setData('text', text);
+                  list.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true })); }""",
+                str(PREDICTION_PATH))
+            await expect(chosen).to_have_text(PREDICTION_PATH.name)
+
+            await _go_to(page, DATASET_PATH.parent / "no_such_run" / "a.xyz")
+            await expect(page.locator("#fb-error")).to_have_text(
+                f'No "no_such_run" in {DATASET_PATH.parent}')
+        finally:
+            await browser.close()

@@ -435,6 +435,16 @@ export class RemoteBrowser {
     $('fb-modal').addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.cancel();
     });
+    // A path pasted anywhere in the dialog but a text field goes there: a
+    // folder opens, a file is chosen in its folder.
+    $('fb-modal').addEventListener('paste', (e) => {
+      if (e.target.closest('input, textarea, select')) return;
+      const text = (e.clipboardData?.getData('text') || '').trim();
+      if (!/^[~/]/.test(text) || text.includes('\n')) return;
+      e.preventDefault();
+      $('fb-path').value = text;
+      this._navigate(text);
+    });
     // The path can be typed: Enter goes there.
     $('fb-path').addEventListener('keydown', (e) => this._pathKey(e));
     $('fb-path').addEventListener('input', () => {
@@ -855,6 +865,10 @@ export class RemoteBrowser {
     this._path = kw.path;
     this._parent = kw.parent;
     if (kw.home) this._home = kw.home;
+    // A file's path was typed or pasted: its folder is listed, and the file
+    // is chosen as if it had been clicked.
+    if (kw.file && !PICK_MODES.has(this._mode)) this._selectAfterListing = kw.file;
+    else if (kw.file && this._mode === 'save-file') $('fb-name').value = kw.file;
     $('fb-error').style.display = 'none';
     // A path typed while this listing was on its way is kept: the user's
     // next Enter goes there, not to the folder that just arrived.

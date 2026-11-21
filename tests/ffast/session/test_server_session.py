@@ -1882,3 +1882,31 @@ def test_a_plot_view_of_a_table_comes_whole():
     env.results = _FakeResults({"t": _make_metric_result("t", table)})
     _, _, kw, values, idx = _view(env, kind="line", metrics={"y": "t"}, dataset_fp="ds1")
     assert idx is None and values["y"].shape == (30_000, 3)
+
+
+def _list(path):
+    async def scenario():
+        s = ServerSession(_FakeEnv(), asyncio.Queue())
+        await s.dispatch("LIST_DIR", [path], {})
+        return s.outbound.get_nowait()
+    return unpack(_run(scenario()))[2]
+
+
+def test_list_dir_gives_each_entry_its_modified_time(tmp_path):
+    (tmp_path / "a.xyz").write_text("x")
+    entry = next(e for e in _list(str(tmp_path))["entries"] if e["name"] == "a.xyz")
+    assert entry["mtime"] == pytest.approx((tmp_path / "a.xyz").stat().st_mtime)
+
+
+def test_list_dir_of_a_file_lists_its_folder_and_names_it(tmp_path):
+    (tmp_path / "a.xyz").write_text("x")
+    kw = _list(str(tmp_path / "a.xyz"))
+    assert kw["path"] == str(tmp_path)
+    assert kw["file"] == "a.xyz"
+    assert kw["error"] is None
+    assert _list(str(tmp_path))["file"] is None
+
+
+def test_list_dir_of_a_missing_path_says_which_part_is_missing(tmp_path):
+    kw = _list(str(tmp_path / "run_04" / "a.xyz"))
+    assert kw["error"] == f'No "run_04" in {tmp_path}'

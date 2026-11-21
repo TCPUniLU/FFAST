@@ -141,6 +141,15 @@ def _frame_of(values, i):
     return values[i]
 
 
+def _missingPart(path):
+    """Which part of ``path`` does not exist: `No "run_04" in /scratch/aspirin`."""
+    import os
+    missing, at = os.path.basename(path), os.path.dirname(path)
+    while at and not os.path.isdir(at) and os.path.dirname(at) != at:
+        missing, at = os.path.basename(at), os.path.dirname(at)
+    return f'No "{missing}" in {at}'
+
+
 class ServerSession:
     """Owns Visualization Views, dispatches client events, replays state.
 
@@ -1458,14 +1467,21 @@ class ServerSession:
         Full-filesystem browse backing the web file picker. An empty/None
         ``path`` starts at ``env.workdir`` (``--workdir``, else the folder the
         server was started from); ``home`` is sent back for the ⌂ button. Each entry is
-        ``{name, is_dir, size}``; directories sort first, then files, both
+        ``{name, is_dir, size, mtime}``; directories sort first, then files, both
         case-insensitive. ``parent`` is None at the filesystem root.
+
+        A file's path (typed or pasted) lists the folder it is in and names it
+        in ``file``, so the window chooses it as if it had been clicked. A path
+        that does not exist says which part is missing.
         """
         import os
 
         home = os.path.expanduser("~")
         start = getattr(self.env, "workdir", None) or os.getcwd()
         abspath = os.path.abspath(os.path.expanduser(path)) if path else start
+        file = None
+        if os.path.isfile(abspath):
+            abspath, file = os.path.split(abspath)
 
         entries: list = []
         error: str | None = None
@@ -1478,9 +1494,16 @@ class ServerSession:
                     except OSError:
                         # Broken symlink / unreadable — list name, treat as file
                         is_dir, size = False, 0
-                    entries.append({"name": de.name, "is_dir": is_dir, "size": size})
+                    try:
+                        mtime = de.stat().st_mtime
+                    except OSError:
+                        mtime = None
+                    entries.append({"name": de.name, "is_dir": is_dir, "size": size, "mtime": mtime})
             entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
             logger.info("LIST_DIR %r: %d entries", abspath, len(entries))
+        except FileNotFoundError:
+            error = _missingPart(abspath)
+            logger.warning("LIST_DIR error for %r: %s", abspath, error)
         except Exception as exc:
             logger.warning("LIST_DIR error for %r: %s", abspath, exc)
             error = str(exc)
@@ -1504,6 +1527,7 @@ class ServerSession:
                 home=home,
                 entries=entries,
                 error=error,
+                file=file,
             ).model_dump(),
             error=error,
         )

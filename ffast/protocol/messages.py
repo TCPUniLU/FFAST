@@ -198,6 +198,7 @@ class DirEntry(BaseModel):
     name: str
     is_dir: bool
     size: int = 0
+    mtime: Optional[float] = None   # seconds since 1970, None when unreadable
 
 
 class DirListing(BaseModel):
@@ -210,6 +211,7 @@ class DirListing(BaseModel):
     home: str
     entries: list[DirEntry] = Field(default_factory=list)
     error: Optional[str] = None
+    file: Optional[str] = None   # a file's path was asked: its folder is listed, this names it
 
 
 class MetricResultMessage(BaseModel):
