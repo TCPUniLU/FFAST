@@ -51,6 +51,16 @@ export function withUnit(text, unit) {
 }
 
 /**
+ * A name the user kept (Rename…) with the unit filled in: its "[unit]" shows
+ * the unit once there is one, as an automatic name does ("(eV/Å)").
+ */
+export function fillUnit(text, unit) {
+  const u = displayUnit(unit);
+  if (!u || u === UNIT_PLACEHOLDER) return text;
+  return text.split(UNIT_PLACEHOLDER).join(`(${u})`);
+}
+
+/**
  * The units of dataset `fp`: those of the loaded dataset it was cut from, as a
  * subset's metadata carries none of its own.
  * @param {string} fp

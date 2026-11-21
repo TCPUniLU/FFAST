@@ -42,7 +42,7 @@ import {
 import { COLORABLE_SHAPES, DEFAULT_LOOK, colouringLabel } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { defaultSettings } from '../view_settings.js';
-import { editableDimension, resolveUnit, withUnit } from '../units.js';
+import { editableDimension, fillUnit, resolveUnit, withUnit } from '../units.js';
 import { unitPopover } from '../dialogs.js';
 import { formatScientific } from '../panels.js';
 import { createColourBar } from '../colorbar_overlay.js';
@@ -380,15 +380,16 @@ export function createColorByPane(sidebarEl, callbacks) {
   /** Which colouring a typed name belongs to (Rename…). */
   const colouringKey = () => state.source || shownColorBy?.label || '';
   /** The name the bar shows when none is typed. */
+  const shownUnit = () => resolveUnit(shownColorBy.unit, callbacks.unitsOf?.() || {});
   const automaticName = () => {
-    const units = callbacks.unitsOf?.() || {};
     const id = state.source?.startsWith('metric:') ? state.source.slice(7) : '';
     const name = forcesSide(id) ? forcesLabel(id) : shownColorBy.label;
-    return withUnit(name, resolveUnit(shownColorBy.unit, units));
+    return withUnit(name, shownUnit());
   };
   const _renderLabel = () => {
     if (!shownColorBy) return;
-    cbLabel.textContent = colourBar.nameOf(colouringKey()) ?? automaticName();
+    const typed = colourBar.nameOf(colouringKey());
+    cbLabel.textContent = typed != null ? fillUnit(typed, shownUnit()) : automaticName();
     // Colours that are not final yet, or why they could not be (ADR 0082).
     if (shownColorBy.note) {
       const note = document.createElement('span');
@@ -416,7 +417,9 @@ export function createColorByPane(sidebarEl, callbacks) {
     const finish = (commit) => {
       if (done) return;
       done = true;
-      if (commit) colourBar.setName(key, input.value);
+      // The automatic name, left as it was or typed back, is no name of the
+      // user's: it stays automatic, so it keeps following the unit.
+      if (commit) colourBar.setName(key, input.value.trim() === automaticName() ? '' : input.value);
       _renderLabel();
     };
     input.addEventListener('keydown', (e) => {

@@ -333,3 +333,40 @@ async def test_web_another_task_ending_does_not_end_a_load(ffast_web_server):
             assert await page.evaluate("() => window.ffastApp._browser._pending") is None
         finally:
             await browser.close()
+
+
+async def test_web_units_named_with_a_prediction_from_the_same_file_show_on_the_colourbar(
+        ffast_web_server, tmp_path):
+    """The steps of a real session (trace 2026-11-21 17:57): one load names
+    both units and takes a prediction from the same file; the colourbar of
+    the force error colouring then shows the force unit, not "[unit]"."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    _two_key_file(tmp_path)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 900})
+        label = page.locator("#colorbar-label")
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await _go_to(page, tmp_path)
+            await page.locator("#fb-list .fb-row", has_text="two_keys.xyz").click()
+            await expect(page.locator("#fb-keys")).to_be_visible()
+            await page.locator("#fb-add-pred").click()
+            await page.locator("#fb-energy-unit").fill("eV")
+            await page.locator("#fb-force-unit").fill("eV/Å")
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#model-list .obj-row", has_text="MACE")).to_be_visible(timeout=30000)
+            await page.locator("#model-list .obj-row", has_text="MACE").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            try:
+                await expect(label).to_have_text(re.compile(r"\(eV/Å\)$"), timeout=15000)
+            except AssertionError as exc:
+                seen = await page.evaluate(
+                    "() => { const a = window.ffastApp; return { focused: a._focusedDatasetFp(),"
+                    " units: Object.fromEntries([...a._datasets].map(([k, m]) => [k, m.units])) }; }")
+                raise AssertionError(f"{exc}\npage state: {seen}") from None
+        finally:
+            await browser.close()

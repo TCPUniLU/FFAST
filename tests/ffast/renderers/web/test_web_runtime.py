@@ -1820,6 +1820,71 @@ async def test_web_a_force_unit_named_at_load_shows_on_the_colourbar(ffast_web_s
             await browser.close()
 
 
+@pytest.mark.parametrize("files", [
+    (DATASET_PATH, PREDICTION_PATH, "MACE_energy", "MACE_forces"),
+    (REPO_ROOT / "examples" / "data" / "fixed-sized subsystem" / "graphene_naphthyridine_sampled.xyz",
+     REPO_ROOT / "examples" / "data" / "fixed-sized subsystem" / "predictions_graphene_naphthyridine.xyz",
+     "energy", "forces"),
+], ids=["variable-sized", "fixed-sized"])
+async def test_web_units_named_on_a_reload_show_on_the_colourbar_of_the_new_view(ffast_web_server, files):
+    """The steps of a real session (trace 2026-11-21 18:08): load a dataset
+    and its prediction, colour by force error, then load the same dataset
+    again naming both units and its prediction again. The colourbar of the
+    force colouring shows the force unit, not "[unit]"."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    dataset_path, prediction_path, energy_key, force_key = files
+
+    async def load_dataset(page, energy="", force=""):
+        await _file_menu(page, "Load Dataset…")
+        await _go_to_in_browser(page, dataset_path.parent)
+        await page.locator("#fb-list .fb-row", has_text=dataset_path.name).click()
+        await page.locator("#fb-energy-unit").fill(energy)
+        await page.locator("#fb-force-unit").fill(force)
+        await page.locator("#fb-load").click()
+        await expect(page.locator("#fb-modal")).to_be_hidden()
+        await page.wait_for_function("() => window.ffastApp._datasets.size > 0", timeout=30000)
+
+    async def load_prediction(page):
+        await _file_menu(page, "Load Prediction…")
+        await _go_to_in_browser(page, prediction_path.parent)
+        await page.locator("#fb-list .fb-row", has_text=prediction_path.name).click()
+        await expect(page.locator(f"#fb-force-key option[value='{force_key}']")).to_have_count(1)
+        await page.locator("#fb-energy-key").select_option(energy_key)
+        await page.locator("#fb-force-key").select_option(force_key)
+        await page.locator("#fb-load").click()
+        await expect(page.locator("#fb-modal")).to_be_hidden()
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        label = page.locator("#colorbar-label")
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await load_dataset(page)
+            await load_prediction(page)
+            await expect(page.locator("#model-list .obj-row")).to_have_count(1, timeout=30000)
+            await page.locator("#model-list .obj-row").first.click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await expect(label).to_have_text(re.compile(r"\[unit\]$"), timeout=15000)
+
+            await load_dataset(page, energy="eV", force="eV/Å")
+            await load_prediction(page)
+            await page.locator("#model-list .obj-row").first.click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            try:
+                await expect(label).to_have_text(re.compile(r"\(eV/Å\)$"), timeout=15000)
+            except AssertionError as exc:
+                seen = await page.evaluate(
+                    "() => { const a = window.ffastApp; const fp = a._focusedDatasetFp();"
+                    " return { label: document.getElementById('colorbar-label').textContent,"
+                    " focused: fp, units: Object.fromEntries([...a._datasets].map(([k, m]) => [k.slice(0, 8), m.units])) }; }")
+                raise AssertionError(f"{exc}\npage state: {seen}") from None
+        finally:
+            await browser.close()
+
+
 async def test_web_publication_style_and_reset(shared_dataset_server):
     """Publication: white background (view and export), orthographic, no axes.
     Reset puts back what the quick styles change."""
@@ -3459,6 +3524,62 @@ async def test_web_the_colour_bar_name_is_renamed_per_colouring(ffast_web_server
 
             await rename("")
             await expect(name).to_have_text(automatic)
+        finally:
+            await browser.close()
+
+
+async def test_web_a_colour_bar_name_left_as_it_was_keeps_following_the_unit(ffast_web_server):
+    """Rename… starts from the automatic name, "… [unit]". Closing it without
+    a change kept that text as the name, so naming the unit later never
+    showed. Now it stays automatic; and a name kept that way before (in this
+    browser's storage) shows the unit in place of its "[unit]"."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    key = "metric:ffast.force_difference[atom+structure;component;mae]"
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        name = page.locator("#colorbar-label")
+
+        async def colour_by_force_error():
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await expect(name).to_have_text(re.compile(r"\[unit\]$"), timeout=15000)
+
+        async def name_the_unit(unit):
+            await name.click()
+            await page.locator("#unit-popover input").fill(unit)
+            await page.locator("#unit-popover input").press("Enter")
+
+        try:
+            await _open_view(page, ws_port, web_port, dataset_fp)
+            await colour_by_force_error()
+            await page.locator("#legend3d .cb-piece-name").click(button="right")
+            await page.locator(".cb-menu [data-action='cb-rename']").click()
+            await expect(name.locator("input")).to_be_focused()
+            await name.locator("input").press("Enter")              # left as it was
+            kept = await page.evaluate(
+                "(k) => (JSON.parse(localStorage.getItem('ffast.layout') || '{}').colourBar?.names || {})[k] ?? null",
+                key)
+            assert kept is None
+            await name_the_unit("eV/Å")
+            await expect(name).to_have_text(re.compile(r"\(eV/Å\)$"), timeout=15000)
+
+            # A name kept before this fix, holding the placeholder.
+            await name_the_unit("")
+            await expect(name).to_have_text(re.compile(r"\[unit\]$"), timeout=15000)
+            await page.evaluate(
+                """(k) => { const all = JSON.parse(localStorage.getItem('ffast.layout') || '{}');
+                  const bar = all.colourBar || {};
+                  bar.names = { ...(bar.names || {}), [k]: 'Force error [unit]' };
+                  all.colourBar = bar; localStorage.setItem('ffast.layout', JSON.stringify(all)); }""", key)
+            await page.reload(wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await colour_by_force_error()
+            await expect(name).to_have_text("Force error [unit]")
+            await name_the_unit("eV/Å")
+            await expect(name).to_have_text("Force error (eV/Å)", timeout=15000)
         finally:
             await browser.close()
 
