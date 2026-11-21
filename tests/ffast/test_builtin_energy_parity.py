@@ -42,3 +42,26 @@ def test_both_energy_parity_metrics_take_the_tabs_shift_control():
     for mid in ("ffast.energy_parity_density", "ffast.energy_parity_outliers"):
         schema, _fn = default_registry.get(mid)
         assert "shifted" in schema.parameters, mid
+
+
+def test_streamed_worst_structures_read_each_value_once():
+    """The kept values travel with their errors: reading the 50,000 worst
+    back afterwards took one read each, 12 s for 7.1M energies from the
+    parsed cache (2026-11-21)."""
+    from ffast.io.batched import BatchedArray
+    from ffast.metrics.streaming import worst
+
+    rng = np.random.default_rng(3)
+    true = rng.normal(size=200_000)
+    pred = true + rng.normal(size=true.size)
+    reads = [0]
+
+    def counted(values):
+        def read(a, b):
+            reads[0] += 1
+            return values[a:b]
+        return BatchedArray(values.shape, values.dtype, read, batch_rows=10_000)
+
+    rows = worst(counted(true), counted(pred) - 0.5, components=False, k=1000)
+    np.testing.assert_array_equal(rows, worst_structures(true, pred - 0.5, k=1000))
+    assert reads[0] <= 2 * (true.size // 10_000 + 1)

@@ -386,6 +386,10 @@ def parity(true, pred, bins=300):
 def worst(true, pred, offsets=None, *, components=True, k=50_000):
     t, p = asarray(true).ravel(), asarray(pred).ravel()
     indices, errors = np.zeros(0, dtype=np.int64), np.zeros(0)
+    # The true and predicted values travel with their errors: reading the
+    # k kept ones back afterwards took one read each, 100,000 reads and
+    # 12 s for the energies of 7.1M structures from the parsed cache.
+    true_kept, pred_kept = np.zeros(0), np.zeros(0)
     for a, b, x in blocks(t):
         x, y = x.astype(np.float64), np.asarray(p[a:b], dtype=np.float64)
         err = np.abs(y - x)
@@ -394,11 +398,15 @@ def worst(true, pred, offsets=None, *, components=True, k=50_000):
             idx = idx[np.argpartition(-err[idx], k - 1)[:k]]
         indices = np.concatenate((indices, idx + a))
         errors = np.concatenate((errors, err[idx]))
+        true_kept = np.concatenate((true_kept, x[idx]))
+        pred_kept = np.concatenate((pred_kept, y[idx]))
         if len(indices) > k:
             keep = np.argpartition(-errors, k - 1)[:k]
             indices, errors = indices[keep], errors[keep]
-    indices = indices[np.argsort(-errors, kind="stable")]
-    values = [np.asarray(t[indices]), np.asarray(p[indices])]
+            true_kept, pred_kept = true_kept[keep], pred_kept[keep]
+    order = np.argsort(-errors, kind="stable")
+    indices = indices[order]
+    values = [true_kept[order], pred_kept[order]]
     if components:
         offsets = np.asarray(
             offsets if offsets is not None else [0, len(t) // 3]
