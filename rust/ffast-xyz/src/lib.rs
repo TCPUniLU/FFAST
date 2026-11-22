@@ -1147,9 +1147,13 @@ fn newlines_in(block: &[u8], base: usize) -> Vec<usize> {
     out
 }
 
-/// Every line end of a buffer, found in parallel before the walk.
+/// Every line end of a buffer, found in parallel before the walk: those of
+/// a frame carried over from the window before (`head`, from the buffer's
+/// start), then the window's own (`nl`, each `shift` bytes further on).
 struct Lines {
+    head: Vec<usize>,
     nl: Vec<usize>,
+    shift: usize,
     k: usize,
     len: usize,
     at_eof: bool,
@@ -1182,18 +1186,27 @@ fn read_and_index(file: &std::fs::File, start: u64, end: u64, threads: usize)
 
 impl Lines {
     fn new(nl: Vec<usize>, len: usize, at_eof: bool) -> Self {
-        Lines { nl, k: 0, len, at_eof }
+        Lines { head: Vec::new(), nl, shift: 0, k: 0, len, at_eof }
+    }
+
+    /// The `k`-th line end, if it lies within the first `len` bytes.
+    fn at(&self, k: usize) -> Option<usize> {
+        let e = match self.head.get(k) {
+            Some(&e) => Some(e),
+            None => self.nl.get(k - self.head.len()).map(|&e| e + self.shift),
+        };
+        e.filter(|&e| e < self.len)
     }
 
     /// The end of the line starting at `p`, past its `\n`; the buffer's end
     /// for a last line without one when the buffer ends the file; None when
     /// the line goes on past the buffer. Calls come with increasing `p`.
     fn end(&mut self, p: usize) -> Option<usize> {
-        while self.k < self.nl.len() && self.nl[self.k] < p {
+        while self.at(self.k).is_some_and(|e| e < p) {
             self.k += 1;
         }
-        match self.nl.get(self.k) {
-            Some(&e) => Some(e + 1),
+        match self.at(self.k) {
+            Some(e) => Some(e + 1),
             None if self.at_eof => Some(self.len),
             None => None,
         }
@@ -1202,11 +1215,11 @@ impl Lines {
 
 /// The walk of `find_frames` over `data`, the file's bytes from `base` on
 /// (to its end when `at_eof`). None: the first frame does not fit in `data`.
-fn find_in(data: &[u8], nl: Vec<usize>, base: usize, at_eof: bool, limit: usize)
+fn find_in(data: &[u8], mut lines: Lines, base: usize, limit: usize)
     -> Option<(Vec<i64>, Vec<i64>, usize, u8)> {
     let (mut starts, mut counts) = (Vec::new(), Vec::new());
     let stop = limit.max(1);
-    let mut lines = Lines::new(nl, data.len(), at_eof);
+    let at_eof = lines.at_eof;
     let mut pos = 0;
     // A frame that runs past the bytes read: the next call starts with it.
     macro_rules! cut {
@@ -1270,26 +1283,245 @@ fn find_frames<'py>(
 ) -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8)> {
     let file = std::fs::File::open(path)?;
     let size = file.metadata()?.len();
-    let (starts, counts, next, state) = if offset >= size {
-        (Vec::new(), Vec::new(), offset as usize, FIND_END)
-    } else {
-        py.allow_threads(|| -> std::io::Result<_> {
-            let mut want = limit.max(1);
-            loop {
-                let end = offset.saturating_add(want).min(size);
-                let mut clock = tick();
-                let (data, nl) = read_and_index(&file, offset, end, threads)?;
-                tock("find.read + newlines", &mut clock);
-                let found = find_in(&data, nl, offset as usize, end == size, limit as usize);
-                tock("find.walk", &mut clock);
-                if let Some(found) = found {
-                    return Ok(found);
-                }
-                want = want.saturating_mul(2); // one frame longer than the bytes read
-            }
-        })?
-    };
+    let (starts, counts, next, state) = py.allow_threads(|| find_plain(&file, size, offset, limit, threads))?;
     Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state))
+}
+
+/// The work of `find_frames`, without Python.
+fn find_plain(file: &std::fs::File, size: u64, offset: u64, limit: u64, threads: usize)
+    -> std::io::Result<(Vec<i64>, Vec<i64>, usize, u8)> {
+    if offset >= size {
+        return Ok((Vec::new(), Vec::new(), offset as usize, FIND_END));
+    }
+    let mut want = limit.max(1);
+    loop {
+        let end = offset.saturating_add(want).min(size);
+        let mut clock = tick();
+        let (data, nl) = read_and_index(file, offset, end, threads)?;
+        tock("find.read + newlines", &mut clock);
+        let found = find_in(&data, Lines::new(nl, data.len(), end == size), offset as usize, limit as usize);
+        tock("find.walk", &mut clock);
+        if let Some(found) = found {
+            return Ok(found);
+        }
+        want = want.saturating_mul(2); // one frame longer than the bytes read
+    }
+}
+
+// ── a frame finder that reads ahead ───────────────────────────────────────
+//
+// `find_frames` opens the file, makes a thread pool and a new buffer, reads
+// one window and waits for its slowest piece, on every call. On MeluXina's
+// Lustre that ran at 2.3–2.7 GB/s where plain reads of the same file ran at
+// 4.2 GB/s (job 5481079). `FrameFinder` keeps the file, the threads and the
+// buffers between calls, and reads the next windows while Python handles the
+// one it got, so a slow piece of one window overlaps reads of the next.
+
+/// Room before a window's bytes for the unfinished frame carried over from
+/// the window before it, so the two join without copying the window.
+const CARRY_ROOM: usize = 4 << 20;
+
+type WindowRead = std::io::Result<(Vec<u8>, Vec<usize>)>;
+
+/// One window `[start, end)` being read on the finder's threads.
+struct Ahead {
+    start: u64,
+    end: u64,
+    done: std::sync::mpsc::Receiver<WindowRead>,
+}
+
+/// Bytes `[start, end)` of `file` in `buf[CARRY_ROOM..]` and their line ends
+/// (counted from CARRY_ROOM): each 4 MB piece is read and searched by one
+/// task on `pool`. A reused `buf` is not cleared first.
+fn read_window(file: &std::fs::File, pool: &rayon::ThreadPool, mut buf: Vec<u8>, start: u64, end: u64)
+    -> WindowRead {
+    const PIECE: usize = 1 << 22;
+    buf.resize(CARRY_ROOM + (end - start) as usize, 0);
+    let jobs: Vec<(usize, &mut [u8])> =
+        buf[CARRY_ROOM..].chunks_mut(PIECE).enumerate().map(|(i, p)| (i * PIECE, p)).collect();
+    let work = |(at, piece): (usize, &mut [u8])| -> std::io::Result<Vec<usize>> {
+        let mut clock = tick();
+        read_exact_at(file, piece, start + at as u64)?;
+        tock("find_chunk.pread", &mut clock);
+        let nl = newlines_in(piece, at);
+        tock("find_chunk.newlines", &mut clock);
+        Ok(nl)
+    };
+    let parts: Vec<Vec<usize>> = pool.install(|| jobs.into_par_iter().map(work).collect::<std::io::Result<_>>())?;
+    Ok((buf, parts.concat()))
+}
+
+/// `find_frames` for one file, call after call: `find(offset, limit)` gives
+/// what `find_frames(path, offset, limit, threads)` gives, looking at the
+/// same bytes `[offset, offset + limit)` even when more are already read.
+/// When `offset` is where the call before stopped, those bytes are already
+/// read (`ahead` calls' worth are read ahead); any other offset is read on
+/// the spot.
+#[pyclass(module = "ffast_xyz._ffast_xyz")]
+struct FrameFinder {
+    file: std::sync::Arc<std::fs::File>,
+    size: u64,
+    pool: std::sync::Arc<rayon::ThreadPool>,
+    threads: usize,
+    ahead: usize,
+    queue: std::collections::VecDeque<Ahead>,
+    /// Where the next window to read ahead starts.
+    read_to: u64,
+    /// The unfinished frame after the last call: its first byte, and its
+    /// bytes up to the end of what that call read (`carry_end`).
+    carry: Option<(u64, Vec<u8>)>,
+    carry_end: u64,
+    spare: Vec<Vec<u8>>,
+}
+
+impl FrameFinder {
+    fn find_inner(&mut self, offset: u64, limit: u64) -> std::io::Result<(Vec<i64>, Vec<i64>, usize, u8)> {
+        if offset >= self.size {
+            self.forget();
+            return Ok((Vec::new(), Vec::new(), offset as usize, FIND_END));
+        }
+        let want = limit.max(1);
+        // The bytes find_frames would look at: [offset, need).
+        let need = offset.saturating_add(want).min(self.size);
+        let mut clock = tick();
+        let joined = match self.carry.take() {
+            Some((at, bytes)) if at == offset && self.queue.front().is_some_and(|a| a.start == self.carry_end) => {
+                let ahead = self.queue.pop_front().unwrap();
+                let (buf, nl) = ahead.done.recv().map_err(std::io::Error::other)??;
+                tock("find.wait for read-ahead", &mut clock);
+                if ahead.end >= need {
+                    Some(self.join(bytes, buf, nl, ahead.end))
+                } else {
+                    self.keep(buf); // read ahead for a smaller limit: read again
+                    None
+                }
+            }
+            _ => None,
+        };
+        let (buf, from, head, nl, shift, end) = match joined {
+            Some(j) => j,
+            None => {
+                self.forget();
+                let buf = self.spare.pop().unwrap_or_default();
+                let (buf, nl) = read_window(&self.file, &self.pool, buf, offset, need)?;
+                tock("find.read now", &mut clock);
+                self.read_to = need;
+                (buf, CARRY_ROOM, Vec::new(), nl, 0, need)
+            }
+        };
+        let data = &buf[from..];
+        let len = (need - offset) as usize;
+        let lines = Lines { head, nl, shift, k: 0, len, at_eof: need == self.size };
+        let found = find_in(&data[..len], lines, offset as usize, limit as usize);
+        tock("find.walk", &mut clock);
+        let Some(found) = found else {
+            // The first frame is longer than the window: the plain way.
+            self.keep(buf);
+            self.forget();
+            return find_plain(&self.file, self.size, offset, limit, self.threads);
+        };
+        if found.3 == FIND_MORE {
+            let next = found.2 as u64;
+            self.carry = Some((next, data[(next - offset) as usize..].to_vec()));
+            self.carry_end = end;
+            self.keep(buf);
+            // The next calls' bytes are read while Python handles these frames.
+            self.fill(next, want);
+        } else {
+            self.keep(buf);
+            self.forget();
+        }
+        Ok(found)
+    }
+
+    /// The carried frame `bytes` put before a window read ahead (`buf`, its
+    /// line ends `nl`, ending at byte `end`): `(buffer, where the bytes start
+    /// in it, the carried frame's line ends, nl, their shift, end)`.
+    #[allow(clippy::type_complexity)]
+    fn join(&mut self, bytes: Vec<u8>, mut buf: Vec<u8>, nl: Vec<usize>, end: u64)
+        -> (Vec<u8>, usize, Vec<usize>, Vec<usize>, usize, u64) {
+        let c = bytes.len();
+        let head = newlines_in(&bytes, 0);
+        if c <= CARRY_ROOM {
+            buf[CARRY_ROOM - c..CARRY_ROOM].copy_from_slice(&bytes);
+            return (buf, CARRY_ROOM - c, head, nl, c, end);
+        }
+        // A frame longer than the room: join by copying.
+        let mut joined = Vec::with_capacity(c + buf.len());
+        joined.extend_from_slice(&bytes);
+        joined.extend_from_slice(&buf[CARRY_ROOM..]);
+        self.keep(buf);
+        (joined, 0, head, nl, c, end)
+    }
+
+    /// Starts reading ahead until the bytes of the next `ahead` calls, each
+    /// `want` long from `next` on, are on their way. The ends are aimed from
+    /// where this call stopped, so the carried bytes stay about one frame.
+    fn fill(&mut self, next: u64, want: u64) {
+        for i in 1..=self.ahead as u64 {
+            let target = next.saturating_add(want.saturating_mul(i)).min(self.size);
+            if self.queue.len() >= self.ahead || self.read_to >= self.size {
+                return;
+            }
+            if target <= self.read_to {
+                continue;
+            }
+            let (start, end) = (self.read_to, target);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (file, pool) = (self.file.clone(), self.pool.clone());
+            let buf = self.spare.pop().unwrap_or_default();
+            std::thread::spawn(move || {
+                let _ = tx.send(read_window(&file, &pool, buf, start, end));
+            });
+            self.queue.push_back(Ahead { start, end, done: rx });
+            self.read_to = end;
+        }
+    }
+
+    /// Drops what was read ahead and the carried frame (a read still running
+    /// ends on its own).
+    fn forget(&mut self) {
+        self.queue.clear();
+        self.carry = None;
+    }
+
+    fn keep(&mut self, buf: Vec<u8>) {
+        if self.spare.len() <= self.ahead {
+            self.spare.push(buf);
+        }
+    }
+}
+
+#[pymethods]
+impl FrameFinder {
+    #[new]
+    #[pyo3(signature = (path, threads=1, ahead=2))]
+    fn new(path: &str, threads: usize, ahead: usize) -> PyResult<Self> {
+        let file = std::fs::File::open(path)?;
+        let size = file.metadata()?.len();
+        let threads = threads.max(1);
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(std::io::Error::other)?;
+        Ok(FrameFinder {
+            file: std::sync::Arc::new(file),
+            size,
+            pool: std::sync::Arc::new(pool),
+            threads,
+            ahead,
+            queue: Default::default(),
+            read_to: 0,
+            carry: None,
+            carry_end: 0,
+            spare: Vec::new(),
+        })
+    }
+
+    /// `(starts, counts, next, state)`, as `find_frames(path, offset, limit,
+    /// threads)` gives them.
+    fn find<'py>(&mut self, py: Python<'py>, offset: u64, limit: u64)
+        -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8)> {
+        let (starts, counts, next, state) = py.allow_threads(|| self.find_inner(offset, limit))?;
+        Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state))
+    }
 }
 
 // ── energies for sampling ─────────────────────────────────────────────────
@@ -1598,6 +1830,7 @@ fn _ffast_xyz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(contract, m)?)?;
     m.add_function(wrap_pyfunction!(parse_into, m)?)?;
     m.add_function(wrap_pyfunction!(find_frames, m)?)?;
+    m.add_class::<FrameFinder>()?;
     m.add_function(wrap_pyfunction!(energies, m)?)?;
     m.add_function(wrap_pyfunction!(timings, m)?)?;
     m.add("FIND_MORE", FIND_MORE)?;

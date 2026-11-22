@@ -98,3 +98,24 @@ and Basic Errors unchanged. About 40 s of the 90 GB load is now writing the
 43 GB kept copy and taking out the predictions on few cores. Laptop, 1 GB
 files, 3 alternating runs: first-open load 0.90x and 0.86x; peak memory 1.11x
 on one file (no clear change on the other); reopen unchanged by this path.
+
+### 2026-11-22: the finder reads the next windows ahead
+
+On MeluXina the frame finder read 2.3–2.7 GB/s alone and 1.8 GB/s during a
+load, against 4.2 GB/s for plain reads of the same file (job 5481079). Each
+call opened the file, made 32 threads and a new buffer, and waited for the
+slowest of its 4 MB pieces; the parser's work between calls left the disk idle.
+
+- `ffast_xyz.FrameFinder` keeps the file, the threads and the buffers for the
+  whole scan, and reads the next `READ_AHEAD` (2) windows while Python handles
+  the one it got. Each call looks at exactly the bytes `find_frames` would, so
+  windows, a resumed scan and the per-window fingerprints (ADR 0107) are
+  unchanged.
+- `scan` reads ahead only when the memory budget has room for 40 windows;
+  otherwise, and with a package built before `FrameFinder`, it calls
+  `find_frames` as before.
+
+Measured (job 5481094, 90 GB, in-memory load, two alternating runs each):
+total 95 s → 86.5 s; time waiting for the finder 54 s → 32 s; same 7,094,423
+frames. Parsing (~28 s) and the cache save after it (15–20 s) now take most of
+the rest.

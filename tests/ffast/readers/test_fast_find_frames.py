@@ -62,12 +62,23 @@ def states(monkeypatch):
     """The states the fast parser's calls returned."""
     seen = []
     real = ffast_xyz.find_frames
+    real_finder = ffast_xyz.FrameFinder
 
     def spy(path, offset, limit, threads=1):
         got = real(path, offset, limit, threads)
         seen.append(got[3])
         return got
+
+    class Spy:
+        def __init__(self, *args):
+            self.finder = real_finder(*args)
+
+        def find(self, offset, limit):
+            got = self.finder.find(offset, limit)
+            seen.append(got[3])
+            return got
     monkeypatch.setattr(ffast_xyz, "find_frames", spy)
+    monkeypatch.setattr(ffast_xyz, "FrameFinder", Spy)
     return seen
 
 
@@ -153,3 +164,84 @@ def test_a_package_without_find_frames_leaves_the_scan_to_python(tmp_path, monke
     assert frame_index._fast_finder() is None
     starts, counts = _scan(_write(tmp_path, FRAME * 2), True, monkeypatch)
     assert counts.tolist() == [2, 2] and starts.tolist() == [0, len(FRAME), 2 * len(FRAME)]
+
+
+# ── the finder that reads ahead (FrameFinder) ──────────────────────────────
+
+def _uneven_frames(count, seed=0):
+    rng = np.random.default_rng(seed)
+    return "".join(f"{n}\nframe {i}\n" + "".join(f"H {a} {'0' * int(rng.integers(0, 9))} 1\n" for a in range(n))
+                   for i, n in enumerate(rng.integers(1, 40, count)))
+
+
+def _walk(find, size, limits):
+    """Calls ``find(offset, limit)`` from 0 until the end, each with the next
+    of ``limits`` (cycled); every call's answer."""
+    got, pos, k = [], 0, 0
+    while True:
+        s, c, pos, state = find(pos, limits[k % len(limits)])
+        got.append((s.tolist(), c.tolist(), pos, state))
+        k += 1
+        if state != ffast_xyz.FIND_MORE or pos >= size:
+            return got
+
+
+@pytest.mark.parametrize("ahead", [0, 1, 3])
+@pytest.mark.parametrize("limits", [[997], [5000, 300, 20_000], [9 * 2**20 + 3]], ids=["small", "changing", "9MB"])
+def test_the_finder_reading_ahead_answers_each_call_as_find_frames_does(ahead, limits, tmp_path):
+    # Same windows, not only the same frames: a resumed scan and the cache's
+    # per-window fingerprints (ADR 0107) rely on them.
+    path = _write(tmp_path, _uneven_frames(60_000))
+    size = path.stat().st_size
+    plain = _walk(lambda o, n: ffast_xyz.find_frames(str(path), o, n, 4), size, limits)
+    assert _walk(ffast_xyz.FrameFinder(str(path), 4, ahead).find, size, limits) == plain
+    assert len(plain) > 1 and plain[-1][3] == ffast_xyz.FIND_END
+
+
+def test_a_call_that_does_not_follow_the_last_one_reads_its_own_window(tmp_path):
+    path = _write(tmp_path, FRAME * 1000)
+    finder = ffast_xyz.FrameFinder(str(path), 2, 2)
+    finder.find(0, 10 * len(FRAME))
+    for offset in (500 * len(FRAME), 3 * len(FRAME), 0, 999 * len(FRAME)):     # back, forth, repeated
+        got = finder.find(offset, 7 * len(FRAME))
+        want = ffast_xyz.find_frames(str(path), offset, 7 * len(FRAME), 2)
+        assert [x.tolist() if hasattr(x, "tolist") else x for x in got] == \
+               [x.tolist() if hasattr(x, "tolist") else x for x in want]
+
+
+def test_a_frame_longer_than_the_carry_room_crosses_windows(tmp_path):
+    # Window 1 ends 5 MB into a 6 MB frame: more than the 4 MB kept before
+    # each window for the frame carried over, so the two are joined by copying.
+    small = "3\nsmall\n" + "H 0 0 0\n" * 3
+    content = (small * (3 * 2**20 // len(small)) + f"{6 * 2**20 // 8}\nbig\n" + "H 0 0 0\n" * (6 * 2**20 // 8)
+               + small * 1000)
+    path = _write(tmp_path, content)
+    size = path.stat().st_size
+    for limits in ([8 * 2**20], [2**20]):
+        plain = _walk(lambda o, n: ffast_xyz.find_frames(str(path), o, n, 4), size, limits)
+        assert _walk(ffast_xyz.FrameFinder(str(path), 4, 2).find, size, limits) == plain
+
+
+def test_a_scan_reads_ahead_only_when_the_budget_has_room_for_it(tmp_path, monkeypatch):
+    from ffast.io import budget as budget_module
+    made = []
+    real = ffast_xyz.FrameFinder
+    monkeypatch.setattr(ffast_xyz, "FrameFinder", lambda *a: made.append(a) or real(*a))
+    path = _write(tmp_path, FRAME * 10)
+    window = 3 * len(FRAME)
+    monkeypatch.setattr(frame_index, "FIND_BYTES", window)
+    owner = budget_module.budget()
+    monkeypatch.setattr(owner, "limit", owner.used + window * frame_index.READ_AHEAD_ROOM)
+    _same(_scan(path, False, monkeypatch), _scan(path, True, monkeypatch))
+    assert made == [(str(path), text.fast_threads(), frame_index.READ_AHEAD)]
+    monkeypatch.setattr(owner, "limit", owner.used + window * frame_index.READ_AHEAD_ROOM - 1)
+    _same(_scan(path, False, monkeypatch), _scan(path, True, monkeypatch))
+    assert len(made) == 1
+
+
+def test_a_package_without_the_read_ahead_finder_scans_with_find_frames(tmp_path, monkeypatch, states):
+    monkeypatch.delattr(ffast_xyz, "FrameFinder")
+    path = _write(tmp_path, FRAME * 10)
+    monkeypatch.setattr(frame_index, "FIND_BYTES", 3 * len(FRAME))
+    _same(_scan(path, False, monkeypatch), _scan(path, True, monkeypatch))
+    assert len(states) > 1

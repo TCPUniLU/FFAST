@@ -156,6 +156,13 @@ def _more_frames_follow(f):
 
 
 FIND_BYTES = 256 * 2**20       # the fast parser finds frames in this much text per call
+# Windows the compiled finder reads ahead while Python handles the one it got:
+# reading the next window overlaps the slowest piece of the one before
+# (MeluXina Lustre: finder 2.3–2.7 GB/s, plain reads 4.2 GB/s, job 5481079).
+READ_AHEAD = 2
+# Read ahead only when the memory budget has this many windows free: the
+# windows on their way must not crowd out the parsing beside the scan.
+READ_AHEAD_ROOM = 40
 
 
 def _fast_finder():
@@ -201,11 +208,21 @@ def scan(path, *, progress=None, should_stop=None, on_batch=None, batch_bytes=No
         from ffast.readers.text import fast_threads
         from ffast.io.budget import budget
         parts_s, parts_c, n, threads = [], [], 0, fast_threads()
+        target = batch_bytes or FIND_BYTES
+        owner = budget()
+        ahead = 0
+        if hasattr(fast, "FrameFinder") and owner.fits(target * READ_AHEAD_ROOM):
+            ahead = READ_AHEAD
+            find = fast.FrameFinder(str(path), threads, ahead).find
+        else:            # little memory, or a package built before FrameFinder
+            def find(offset, limit):
+                return fast.find_frames(str(path), offset, limit, threads)
         while True:
             owner = budget()
-            span = min(batch_bytes or FIND_BYTES, max(1, (owner.limit - owner.used) // 4))
-            with owner.reserve(span * 3):
-                s, c, pos, state = fast.find_frames(str(path), pos, span, threads)
+            # The window read now, `ahead` more on their way, and line ends.
+            span = min(target, max(1, (owner.limit - owner.used) // (4 + 2 * ahead)))
+            with owner.reserve(span * (3 + ahead)):
+                s, c, pos, state = find(pos, span)
             parts_s.append(s)
             parts_c.append(c)
             n += len(s)
