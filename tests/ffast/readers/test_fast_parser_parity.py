@@ -263,3 +263,38 @@ def test_frames_far_apart_are_read_in_runs_of_their_own(stride, tmp_path, monkey
         fast = _read(path, True, monkeypatch, stride=stride, workers=4, batch=2)
     assert "slower Python parser" not in caplog.text
     _same(fast, python, ("far apart", stride))
+
+
+def test_the_parser_writes_nan_into_every_row_of_a_frame_that_lacks_a_column(tmp_path):
+    """FFAST makes the arrays with np.empty when FILLS_MISSING is set, so
+    the parser must write the rows of frames without the column itself."""
+    import ffast_xyz
+
+    from ffast.io import frame_index
+
+    assert ffast_xyz.FILLS_MISSING and XyzReader.fills_missing()
+    path = tmp_path / "lacks.extxyz"
+    path.write_bytes(CASES["an optional column some frames lack"].encode())   # frames 0, 2, 4 lack q
+    XyzReader(str(path)).contents()
+    index = frame_index.scan(str(path))
+    starts = np.asarray(index.starts[:-1] if len(index.starts) > len(index.counts) else index.starts, np.uint64)
+    ends = np.append(starts[1:], path.stat().st_size).astype(np.uint64)
+    counts = np.asarray(index.counts, np.int64)
+    atoms = int(counts.sum())
+    arrays = {"numbers": np.zeros(atoms, np.int64), "positions": np.full((atoms, 3), 7.0),
+              "atom:q": np.full(atoms, 7.0)}                       # 7.0: what np.empty might hold
+    got = XyzReader.parse_into(str(path), starts, ends, counts, 0, arrays, 2)
+    assert got["filled"] == ["atom:q"]
+    lacking = np.repeat([i % 2 == 0 for i in range(len(counts))], counts)
+    assert lacking.any() and (~lacking).any()
+    assert np.isnan(arrays["atom:q"][lacking]).all()
+    assert not np.isnan(arrays["atom:q"][~lacking]).any()
+
+
+def test_a_parser_build_without_the_flag_still_gets_nan_filled_arrays(tmp_path, monkeypatch, caplog):
+    """An older ffast_xyz leaves rows of frames without a column untouched;
+    FFAST then fills the arrays with NaN first, as before."""
+    monkeypatch.setattr(XyzReader, "fills_missing", staticmethod(lambda: False))
+    path = tmp_path / "old.extxyz"
+    path.write_bytes(CASES["an optional column some frames lack"].encode())
+    _check(path, "an optional column some frames lack", monkeypatch, caplog)

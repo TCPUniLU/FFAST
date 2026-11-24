@@ -731,6 +731,7 @@ fn parse_chunk(ctx: &Ctx, chunk: Chunk) -> Result<Part, String> {
     let mut fields: Vec<(&[u8], Num)> = Vec::with_capacity(32); // one frame's header numbers
     let mut toks: Vec<&[u8]> = Vec::with_capacity(16);
     let mut new_index: Vec<usize> = Vec::new();
+    let mut missing: Vec<usize> = Vec::new(); // the columns the current layout lacks
     let mut atom = 0usize; // within the chunk
     for row in a..b {
         let frame = ctx.first_frame + row as i64;
@@ -823,12 +824,21 @@ fn parse_chunk(ctx: &Ctx, chunk: Chunk) -> Result<Part, String> {
                     _ => {}
                 }
             }
+            let cols_of = &layouts[li].cols;
+            missing.clear();
+            missing.extend((0..ctx.targets.len())
+                .filter(|&t| !cols_of.iter().any(|c| matches!(c.role, Role::Target(u) if u == t))));
             current = Some((props.to_vec(), li));
         }
         let lay = &layouts[current.as_ref().map_or(0, |c| c.1)];
 
-        // The atom lines.
+        // The atom lines. A column this frame lacks is NaN in its rows
+        // (FILLS_MISSING), so the caller need not fill the arrays first.
         let n = ctx.counts[row] as usize;
+        for &t in &missing {
+            let w = ctx.targets[t].1;
+            cols[t][atom * w..(atom + n) * w].fill(f64::NAN);
+        }
         for _ in 0..n {
             let line = lines.next().ok_or_else(|| format!("frame {frame} has too few atom lines"))?;
             toks.clear();
@@ -924,6 +934,10 @@ fn contract() -> u32 {
 /// earlier groups of the file listed them;
 /// `elements`: symbol -> atomic number; `rev`, `excluded`: a 1-wide column is
 /// no field when `rev.get(name, name)` is in `excluded`.
+///
+/// Every row of every array of `columns` is written: a frame without that
+/// column gets NaN (module flag `FILLS_MISSING`), so the arrays may be made
+/// with `np.empty`.
 ///
 /// Returns `{"values": {key: (rows, int64 or float64)}, "texts": {key: (rows,
 /// [str])}, "new": {column: (atom rows, float64 values)}, "seen": [column],
@@ -1836,6 +1850,8 @@ fn _ffast_xyz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("FIND_MORE", FIND_MORE)?;
     m.add("FIND_END", FIND_END)?;
     m.add("FIND_PYTHON", FIND_PYTHON)?;
+    // parse_into writes NaN into the rows of frames that lack a column.
+    m.add("FILLS_MISSING", true)?;
     m.add("NotFast", m.py().get_type_bound::<NotFast>())?;
     Ok(())
 }

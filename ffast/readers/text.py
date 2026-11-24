@@ -548,7 +548,11 @@ class _Growing:
     at the end. Per-atom forces and fields start as NaN, as in
     ``_read_fast_arrays``."""
 
-    def __init__(self, contents):
+    def __init__(self, contents, fills_missing=False):
+        # True when the parser writes NaN where a frame lacks a column: the
+        # arrays are then made without a NaN fill (about 3.5 s of an 88 s
+        # load of an 83 GB file on a laptop, 2026-11-24).
+        self.fills_missing = fills_missing
         self.fields = ([f"forces:{k}" for k in contents.get("forces") or []]
                        + [f"atom:{k}" for k in contents.get("atom_fields") or []])
         self.has_cell = bool(contents.get("cell"))
@@ -565,7 +569,9 @@ class _Growing:
             shape = (rows, 3, 3)
         else:
             shape = (rows,)
-        return np.empty(shape) if key in ("positions", "cell") else np.full(shape, np.nan)
+        if key in ("positions", "cell") or self.fills_missing:
+            return np.empty(shape)
+        return np.full(shape, np.nan)
 
     def keys(self):
         return ["numbers", "positions"] + (["cell"] if self.has_cell else []) + self.fields
@@ -640,7 +646,7 @@ def _read_whole_one_pass(reader_class, path, contents, progress, workers, use_ca
     owner = budget()
     size = os.path.getsize(path)
     threads = fast_threads() if workers is None else max(1, int(workers))
-    grow = _Growing(contents)
+    grow = _Growing(contents, _fills_missing(reader_class))
     values = _Values(0)
     filled: set = set()
     counts_seen: list = []
@@ -1149,6 +1155,13 @@ def _physical_sizes(starts, ends):
     return sizes
 
 
+def _fills_missing(reader):
+    """Whether ``reader.parse_into`` writes NaN into the rows of frames that
+    lack a column (the ``ffast_xyz.FILLS_MISSING`` flag)."""
+    ask = getattr(reader, "fills_missing", None)
+    return bool(ask()) if callable(ask) else False
+
+
 def _read_fast_arrays(reader_class, path, contents, frames, spans_start, spans_end, kept_counts,
                progress, threads, batch, *, log_read=True):
     """The kept frames through the reader's ``parse_into``: FFAST's arrays,
@@ -1184,8 +1197,10 @@ def _read_fast_arrays(reader_class, path, contents, frames, spans_start, spans_e
               "positions": np.empty((atoms, 3), dtype=np.float64)}
     if has_cell:
         arrays["cell"] = np.empty((total, 3, 3), dtype=np.float64)
+    # Without the parser's own NaN for frames that lack a column, fill first.
+    make = np.empty if _fills_missing(reader_class) else (lambda shape: np.full(shape, np.nan))
     for key in fields:
-        arrays[key] = np.full((atoms, 3) if key.startswith("forces:") else atoms, np.nan)
+        arrays[key] = make((atoms, 3) if key.startswith("forces:") else atoms)
 
     first_atom = np.concatenate([[0], np.cumsum(kept_counts)])
     starts_u, ends_u = spans_start.astype(np.uint64), spans_end.astype(np.uint64)

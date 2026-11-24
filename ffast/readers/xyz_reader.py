@@ -98,6 +98,16 @@ class XyzReader:
         return {name: out[name] for name in sorted(out, key=first.__getitem__)}
 
     @staticmethod
+    def fills_missing():
+        """Whether ``parse_into`` writes NaN where a frame lacks a column, so
+        the arrays need no NaN fill first. Builds before this flag do not."""
+        try:
+            import ffast_xyz
+        except ImportError:
+            return False
+        return bool(getattr(ffast_xyz, "FILLS_MISSING", False))
+
+    @staticmethod
     def parse_into(path, starts, ends, counts, first_frame, arrays, threads):
         """The fast parser (ADR 0100): ``ffast_xyz.parse_into`` fills the
         arrays; its header keys and new columns get the names ``parse``
