@@ -105,3 +105,65 @@ def test_a_batch_that_could_not_be_kept_ends_the_record(folder, tmp_path, monkey
     store = scan(path)
     assert not list(folder.glob("*.progress.json")) and not list(folder.glob("*.bin"))
     assert store.counts.sum() > 0
+
+
+def test_windows_are_hashed_in_order_on_the_scan_hashing_thread(folder, tmp_path, monkeypatch):
+    import threading
+
+    from ffast.readers.indexed import IndexedStore
+
+    seen, real = [], IndexedStore._observe
+
+    def spy(self, part, a, b):
+        seen.append((threading.current_thread().name, a))
+        return real(self, part, a, b)
+
+    monkeypatch.setattr(IndexedStore, "_observe", spy)
+    scan(write_xyz(tmp_path / "h.xyz", n=3000, atoms=40))
+    assert len(seen) > 2
+    assert all(name.startswith("ffast-scan-hash") for name, _ in seen)
+    assert [a for _, a in seen] == sorted(a for _, a in seen)
+
+
+def test_the_next_window_is_parsed_while_the_first_is_hashed(folder, tmp_path, monkeypatch):
+    """The first window's hashing waits until the second window is parsed;
+    if parsing waited for hashing, the event would never be set."""
+    import threading
+
+    from ffast.readers.indexed import IndexedStore
+
+    second_parsed = threading.Event()
+    waited = []
+    real_observe, real_part = IndexedStore._observe, IndexedStore._part
+
+    def observe(self, part, a, b):
+        if a == 0:
+            waited.append(second_parsed.wait(timeout=30))
+        return real_observe(self, part, a, b)
+
+    def part(self, a, b):
+        got = real_part(self, a, b)
+        if a > 0:
+            second_parsed.set()
+        return got
+
+    monkeypatch.setattr(IndexedStore, "_observe", observe)
+    monkeypatch.setattr(IndexedStore, "_part", part)
+    store = scan(write_xyz(tmp_path / "p.xyz", n=3000, atoms=40))
+    assert waited == [True]
+    assert len(store.ranges) > 1
+
+
+def test_an_error_while_hashing_stops_the_scan(folder, tmp_path, monkeypatch):
+    from ffast.readers.indexed import IndexedStore
+
+    real = IndexedStore._observe
+
+    def observe(self, part, a, b):
+        if a > 0:
+            raise RuntimeError("hashing failed")
+        return real(self, part, a, b)
+
+    monkeypatch.setattr(IndexedStore, "_observe", observe)
+    with pytest.raises(RuntimeError, match="hashing failed"):
+        scan(write_xyz(tmp_path / "e.xyz", n=3000, atoms=40))

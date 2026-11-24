@@ -437,10 +437,14 @@ class IndexedStore:
             except OSError:
                 self._record = None
         try:
+            # The hashing thread exits after the writer: a commit on the writer
+            # waits for its window's hashes.
             with ThreadPoolExecutor(max_workers=min(4, text.fast_threads())) as hashes, \
+                    ThreadPoolExecutor(max_workers=1, thread_name_prefix="ffast-scan-hash") as hashing, \
                     ThreadPoolExecutor(max_workers=1) as parsing, \
                     ThreadPoolExecutor(max_workers=1, thread_name_prefix="ffast-cache-write") as writing:
                 self._hash_pool = hashes
+                self._hasher, self._hashing = hashing, None
                 self._writer, self._write = writing, None
                 # Set up after _resume, which may have restored earlier windows.
                 columns = {name: _Appendable(getattr(self, name))
@@ -458,10 +462,9 @@ class IndexedStore:
                     self.uniform = self.uniform and bool((counts == self.counts[0]).all())
                     self.ranges.append((a, b))
                     part = self._part(a, b)
-                    self._observe(part, a, b)
                     self._remember_small(part, a, b)
                     self._observe_elements(part, a, b)
-                    self._commit_after_write(a, b, end)
+                    self._hash_later(part, a, b, then=self._commit_after_hash(a, b, end))
                     if progress and callable(getattr(progress, "bytes_read", None)):
                         progress.bytes_read(min(int(end), self.state[2]), self.state[2], b)
 
@@ -480,7 +483,9 @@ class IndexedStore:
                     batch_bytes=min(128 * 2**20, max(1024, budget().limit // 16)))
                 if pending is not None:
                     pending.result()
+                self._wait_for_hash()
                 self._wait_for_write()
+            self._hasher = None
             # Drop the spare room: keep exact-size copies of the index.
             for name in ("starts", "ends", "counts", "offsets", "frames"):
                 setattr(self, name, getattr(self, name).copy())
@@ -533,8 +538,9 @@ class IndexedStore:
             raise
         finally:
             # The writer thread has ended (its pool's exit waits for it); a
-            # later save writes in line.
+            # later save writes in line. The same for hashing.
             self._writer, self._write = None, None
+            self._hasher, self._hashing = None, None
             # Only half-written files go; committed batches stay (ADR 0107).
             if self.folder.exists():
                 for path in self.folder.glob(self.identity + "-*.tmp"):
@@ -1048,27 +1054,57 @@ class IndexedStore:
             future.result()
             self._write = None
 
-    def _commit_after_write(self, a, b, end):
-        """Record window ``[a, b)`` as done once its batch is in place
-        (ADR 0107). The record is taken now, before the next window changes
-        the hashes; on the writer thread it is written after the batch."""
-        if self._record is None:
-            return
-        record, snapshot = self._record, self._record.snapshot(self)
-        path = self._cache_path(a, b)
+    def _hash_later(self, part, a, b, then=None):
+        """Hash window ``[a, b)`` on the scan's hashing thread, so the parse
+        thread goes on to the next window: hashing in line took 15 s of a
+        129 s load (2026-11-22). Windows are hashed in order, one at a time;
+        the parse thread waits only when the previous window is still being
+        hashed. ``then(hashes)`` runs on the same thread right after this
+        window, with the record's snapshot of the column hashes."""
+        hasher = getattr(self, "_hasher", None)
+        record = self._record
 
-        def commit():
+        def job():
+            self._observe(part, a, b)
+            if then is not None:
+                then(record.frozen_info(self) if record is not None else None)
+
+        if hasher is None:
+            job()
+            return
+        self._wait_for_hash()
+        self._hashing = hasher.submit(contextvars.copy_context().run, job)
+
+    def _wait_for_hash(self):
+        """Wait for the window being hashed, if any; its error is raised here."""
+        future = getattr(self, "_hashing", None)
+        if future is not None:
+            future.result()
+            self._hashing = None
+
+    def _commit_after_hash(self, a, b, end):
+        """What ``_hash_later`` runs after hashing window ``[a, b)``: wait for
+        the window's batch, then record the window as done (ADR 0107). The
+        rest of the record is taken now, before the next window changes the
+        frame index. On the hashing thread, so the writer never waits for
+        hashes: a cache write of the next window waits for the writer."""
+        if self._record is None:
+            return None
+        record = self._record
+        snapshot = record.snapshot(self, with_info=False)
+        path = self._cache_path(a, b)
+        write = getattr(self, "_write", None)      # this window's batch, if written on a thread
+
+        def commit(hashes):
+            if write is not None:
+                write.result()
+            snapshot.info = hashes
             if path.exists():
                 record.commit(snapshot, a, b, end)
             else:
                 record.abandon("a batch was not kept")
 
-        writer = getattr(self, "_writer", None)
-        if writer is None:
-            commit()
-        else:
-            # After this window's write: the writer runs its jobs in order.
-            self._write = writer.submit(commit)
+        return commit
 
     def _parse(self, a, b, path=None, reader=None):
         """Frames ``[a, b)`` parsed from the text of ``path`` (the source by

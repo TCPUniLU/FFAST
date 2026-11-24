@@ -152,10 +152,9 @@ class ScanRecord:
             pass
 
     @staticmethod
-    def snapshot(store):
-        """What ``commit`` reads of ``store``, as it is now: the scan goes on
-        to the next window while this one's batch is still being written,
-        and its record must describe this window (ADR 0112)."""
+    def frozen_info(store):
+        """The column hashes of ``store`` as they are now. A scan that hashes
+        on its own thread takes them there, right after a window's hashing."""
         from types import SimpleNamespace
 
         def frozen(h):
@@ -163,10 +162,21 @@ class ScanRecord:
                                    tail=(lambda t=np.array(h.tail(), copy=True): t),
                                    rows=h.rows)
 
-        info = {key: {"hashes": {d: frozen(h) for d, h in value["hashes"].items()},
+        return {key: {"hashes": {d: frozen(h) for d, h in value["hashes"].items()},
                       "dtype": value["dtype"], "tail": tuple(value["tail"]),
                       "has_nan": value["has_nan"]}
                 for key, value in store.info.items()}
+
+    @staticmethod
+    def snapshot(store, *, with_info=True):
+        """What ``commit`` reads of ``store``, as it is now: the scan goes on
+        to the next window while this one's batch is still being written,
+        and its record must describe this window (ADR 0112). With
+        ``with_info=False`` the caller sets ``info`` once the window is
+        hashed."""
+        from types import SimpleNamespace
+
+        info = ScanRecord.frozen_info(store) if with_info else None
         return SimpleNamespace(
             path=store.path, state=store.state, starts=store.starts, counts=store.counts,
             offsets=store.offsets, info=info, ranges=list(store.ranges),
