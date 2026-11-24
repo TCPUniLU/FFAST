@@ -38,6 +38,33 @@ _parse_lock = threading.RLock()
 CHUNKS_SUFFIX = ".chunks.npz"
 
 
+class _Appendable:
+    """An int64 column that a scan extends window by window.
+
+    The room doubles when full, so adding a window costs its own length, not
+    the length of everything before it: a scan of 669 windows spent about
+    20 s recopying its whole frame index per window. ``extend`` returns the
+    filled part as a view. A view handed out earlier never changes, because
+    later values are written past its end (a resume snapshot keeps one).
+    """
+
+    def __init__(self, values):
+        values = np.asarray(values, dtype=np.int64)
+        self._room = values.copy()
+        self._n = len(values)
+
+    def extend(self, *parts):
+        need = self._n + sum(len(p) for p in parts)
+        if need > len(self._room):
+            bigger = np.empty(max(need, 2 * len(self._room), 1024), dtype=np.int64)
+            bigger[:self._n] = self._room[:self._n]
+            self._room = bigger
+        for part in parts:
+            self._room[self._n:self._n + len(part)] = part
+            self._n += len(part)
+        return self._room[:self._n]
+
+
 def _open_identities(folder, own):
     """The identities in ``folder`` that some process has open, ``own`` left
     out (ADR 0108)."""
@@ -415,16 +442,19 @@ class IndexedStore:
                     ThreadPoolExecutor(max_workers=1, thread_name_prefix="ffast-cache-write") as writing:
                 self._hash_pool = hashes
                 self._writer, self._write = writing, None
+                # Set up after _resume, which may have restored earlier windows.
+                columns = {name: _Appendable(getattr(self, name))
+                           for name in ("starts", "ends", "counts", "offsets", "frames")}
 
                 def consume(starts, counts, end):
                     stop.check()
                     self.check_source()
                     a, b = len(self.counts), len(self.counts) + len(counts)
-                    self.starts = np.concatenate((self.starts, starts))
-                    self.ends = np.concatenate((self.ends, starts[1:], [end]))
-                    self.counts = np.concatenate((self.counts, counts))
-                    self.offsets = np.concatenate((self.offsets, self.offsets[-1] + np.cumsum(counts)))
-                    self.frames = np.arange(b, dtype=np.int64)
+                    self.starts = columns["starts"].extend(starts)
+                    self.ends = columns["ends"].extend(starts[1:], [end])
+                    self.counts = columns["counts"].extend(counts)
+                    self.offsets = columns["offsets"].extend(self.offsets[-1] + np.cumsum(counts))
+                    self.frames = columns["frames"].extend(np.arange(a, b, dtype=np.int64))
                     self.uniform = self.uniform and bool((counts == self.counts[0]).all())
                     self.ranges.append((a, b))
                     part = self._part(a, b)
@@ -451,6 +481,9 @@ class IndexedStore:
                 if pending is not None:
                     pending.result()
                 self._wait_for_write()
+            # Drop the spare room: keep exact-size copies of the index.
+            for name in ("starts", "ends", "counts", "offsets", "frames"):
+                setattr(self, name, getattr(self, name).copy())
             del self._hash_pool
             self._writer = None
             self.check_source()
