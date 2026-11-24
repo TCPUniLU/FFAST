@@ -302,8 +302,14 @@ tables. The "subtract mean energy offset" toggle removes the constant energy bia
 (mean of predicted minus true) everywhere at once; affected plots retitle
 themselves "(shifted)" so you cannot forget it is on.
 
-**Atomic Errors.** Force error distributions and tables per element, with an
-element picker. This is where "the model is fine except on hydrogens" shows up.
+**Atomic Errors.** Force error distributions, tables and MAE/RMSE timelines
+per element, with an element picker. This is where "the model is fine except on
+hydrogens" shows up. The timelines draw a line per ticked element; **All** adds
+the all-atoms line (grey when elements are ticked too). One Smoothing control
+averages each line over a window of frames; a frame without the element is a
+gap and is left out of the average. A value with a gap on both sides, such as
+a rare element found in a few frames, is drawn as a dot; click it to open that
+frame.
 
 **Subsystem Errors.** Net per-structure force error, distribution plus tables.
 
@@ -388,6 +394,36 @@ The sidebar panes:
   background.
 
 Unit cells are drawn when the data has lattice vectors.
+
+### What each Coloring entry shows
+
+Colour By's **Coloring** list opens each entry on the setting below. Force
+Difference, Acceleration Difference and Forces have x, y and z for every
+atom, so the keep boxes under the list choose how they become one colour per
+atom; see [Errors: a base metric and its keep boxes](custom-metrics.md#errors-a-base-metric-and-its-keep-boxes).
+
+| Coloring | Opens on | Needs |
+|---|---|---|
+| Elements | Each element its own colour | — |
+| Displacement | How far each atom moved from the first frame to the last (root mean square of its x, y and z change), the same on every frame | Every frame with the same atoms |
+| Forces | Each atom's force on the frame on screen, mean of \|x\|, \|y\|, \|z\| (Combine: Length gives the magnitude). Prediction: Ground Truth for the dataset's forces, a model for its predicted ones | — |
+| Force Difference | Each atom's force error (model − reference) on the frame on screen, per component, MAE | A model |
+| Acceleration Difference | The same for acceleration (force ÷ mass) | A model |
+| A user metric | Its own values: per atom, or per element spread onto its atoms | Whatever it reads |
+
+Box choices that give one colour per atom, for Force Difference and
+Acceleration Difference:
+
+| Keep boxes ticked | Each atom's colour | Changes with the frame |
+|---|---|---|
+| atom, structure (the default) | Its error on the frame on screen | Yes |
+| atom only | Its error averaged over every frame | No |
+| element only | Its element's error averaged over every frame | No |
+| structure, element | Its element's error on the frame on screen | Yes |
+
+"atom only" needs every frame to have the same atoms in the same order; it is
+greyed otherwise. Example: to see which aspirin atom a model gets most wrong
+over the whole run, pick Force Difference and untick **structure**.
 
 ## Subsets
 

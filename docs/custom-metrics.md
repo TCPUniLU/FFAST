@@ -229,7 +229,8 @@ coarser.
 The 3D view's **Colour By** has the same boxes under the Coloring list, for the
 settings that give one value per atom. There a change recolours at once and is
 kept with the view, not as a metric; **Save as metric** keeps it. Atom ✓ without
-structure gives each atom one colour on every frame.
+structure gives each atom one colour on every frame. [What each Coloring entry
+shows](usage.md#what-each-coloring-entry-shows) lists each entry and its box choices.
 
 The fixed metrics of earlier versions (`ffast.force_mae`,
 `ffast.force_component_rmse_per_structure`, `ffast.energy_mae`, …) are gone. A
@@ -272,7 +273,12 @@ A tab is a grid of panels; a panel binds metrics to axes. Panel kinds available:
 bars per element; an element with no value has no bar and says so). A
 `timeline` also takes a per-structure-and-element metric as `y`: one line per
 element in the element's colour, one line style per prediction, gaps for
-empty cells.
+empty cells, and a dot for a value with a gap on both sides (a rare element
+would otherwise not show). Such a timeline may add a per-structure metric as `aggregate`:
+**All** in the element picker then draws it as the all-atoms line, grey when
+elements are ticked too, and elements draw only when ticked. `transform =
+"smooth"` smooths a per-element metric column by column, so each element is
+its own series and a gap is left out of its windows.
 
 ```toml
 [[visualization.tabs]]
