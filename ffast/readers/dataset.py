@@ -195,7 +195,13 @@ class ReaderDataset(ReaderFields, FlatDatasetLoader):
 
 class ReaderFieldSource(ReaderFields):
     """What ``_extractPredictionFields`` reads a prediction's Dataset Fields
-    from: the fields in a reader's arrays, with the frames' atom counts."""
+    from: the fields in a reader's arrays, with the frames' atom counts.
+
+    A whole atom field (and its missing mask) comes back flat, one row per
+    atom, as the memory-saving path already gives it: every reader of the
+    stored fields takes flat values with the dataset's offsets. A list of one
+    slice per frame took 11 s for the 5.9 M frames of a 90 GB file on
+    MeluXina, on one core (2026-11-24)."""
 
     def __init__(self, arrays, contents=None):
         self.field_arrays = {k: v for k, v in arrays.items() if k.startswith(("frame:", "atom:"))}
@@ -203,3 +209,8 @@ class ReaderFieldSource(ReaderFields):
         self.N = len(counts)
         self.molecule_offsets = np.concatenate([[0], np.cumsum(counts)]).astype(int)
         self.isVariable = bool((counts != counts[0]).any()) if self.N else False
+
+    def _atoms_of(self, flat, indices):
+        if indices is None:
+            return flat
+        return super()._atoms_of(flat, indices)

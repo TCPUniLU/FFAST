@@ -88,4 +88,26 @@ def test_a_prediction_source_answers_like_a_dataset_over_the_same_arrays(files):
     legacy, _ = _both(files, "variable.extxyz")
     assert source.availableFieldKeys() == legacy.availableFieldKeys()
     assert _same(source.getFrameField("gap"), legacy.getFrameField("gap"))
-    assert _same(source.getAtomField("q"), legacy.getAtomField("q"))
+    # A whole atom field comes back flat (one row per atom), the same values.
+    flat = source.getAtomField("q")
+    assert isinstance(flat, np.ndarray) and flat.ndim == 1
+    assert _same(flat, np.concatenate(legacy.getAtomField("q")))
+    missing = legacy.getAtomFieldMissing("q")
+    got = source.getAtomFieldMissing("q")
+    assert (got is None) == (missing is None)
+    if missing is not None:
+        assert np.array_equal(got, np.concatenate(missing))
+    # One frame still comes back as that frame's atoms.
+    assert _same(source.getAtomField("q", indices=1), legacy.getAtomField("q", indices=1))
+
+
+def test_a_flat_prediction_field_resolves_like_a_per_frame_list(files):
+    """Metrics read stored prediction fields through _flatPerAtom; flat and
+    per-frame storage must give the same values."""
+    from ffast.metrics.input_resolver import _flatPerAtom
+
+    path = str(files / "variable.extxyz")
+    source = ReaderFieldSource(chunks.read_arrays(XyzReader, path).arrays)
+    legacy, _ = _both(files, "variable.extxyz")
+    assert _same(_flatPerAtom(source.getAtomField("q"), axes=0),
+                 _flatPerAtom(legacy.getAtomField("q"), axes=0))
