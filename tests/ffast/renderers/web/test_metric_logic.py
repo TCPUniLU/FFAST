@@ -70,6 +70,12 @@ CASES = {
         "   te.metricPanel({id: 'user.t', shape: ml.TABLE_SHAPE}), {elementPicker: true}).tab.selector,"
         " te.plotTarget([], te.metricPanel({id: 'user.a'})).tab.selector,"
         " te.KIND_ROLES.timeline.roles.y]"),
+    "unlisted_roles": (
+        "(() => { const ref = (m) => ({metric: m, transform: 'smooth', params: {}});"
+        " const p = {kind: 'timeline', metrics: {y: 'a', aggregate: 'b'},"
+        "   metric_refs: {y: ref('a'), aggregate: ref('b')}};"
+        " return [te.unlistedRoles(p, 'timeline'), te.unlistedRoles(p, 'density'),"
+        "   te.unlistedRoles(null, 'timeline')]; })()"),
     "undefined_ignores_constants": "ml.undefinedNames('pi * a + n_atoms', ['a'])",
     "undefined_lists_unknown": "ml.undefinedNames('a + b + c', ['a'])",
 
@@ -321,6 +327,13 @@ def test_a_table_is_plotted_as_a_timeline_with_the_element_picker(results):
     assert results["table_shape"] == [
         "plot", "per structure and element → can be plotted, a line per element, and colour atoms",
         "timeline", "atomic", "other", None, ["N_frames", "(N_frames, N_elements)"]]
+
+
+def test_the_panel_editor_keeps_the_roles_it_does_not_show(results):
+    kept, other_kind, new = results["unlisted_roles"]
+    assert kept == {"metrics": {"aggregate": "b"},
+                    "metric_refs": {"aggregate": {"metric": "b", "transform": "smooth", "params": {}}}}
+    assert other_kind == new == {"metrics": {}, "metric_refs": {}}
 
 
 def test_adding_a_per_element_panel_turns_the_element_picker_on(results):

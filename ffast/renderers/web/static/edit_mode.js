@@ -21,7 +21,7 @@ import { askDialog, labelBy, trapFocus } from './dialogs.js';
 import {
   KIND_ROLES, ROW_UNIT_PX, addPanelWithPicker, clampMove, clampSize, copyOf, emptyTab, gridOf, metricsFor, movePanel,
   new3DPanel, onlyPlacesChanged, place, removePanel, replacePanel, resizePanel, setPanelStart,
-  setPanelView, toFineGrid, toSaved,
+  setPanelView, toFineGrid, toSaved, unlistedRoles,
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
 import { cleanStart } from './start_settings.js';
@@ -530,8 +530,8 @@ export class TabEditor {
     const out = same ? structuredClone(panel) : { kind: kind.value };
     out.kind = kind.value;
     out.title = title.value.trim() || null;
-    out.metrics = {};
-    out.metric_refs = {};
+    // Roles the editor does not show (an all-atoms line) are kept as they were.
+    Object.assign(out, unlistedRoles(panel, kind.value));
     for (const role of Object.keys(KIND_ROLES[kind.value].roles)) {
       const ids = [...roles.querySelectorAll(`select[data-role="${role}"]`)].map((s) => s.value);
       const keep = (id, k) => {

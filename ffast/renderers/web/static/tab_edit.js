@@ -31,6 +31,17 @@ export const KIND_ROLES = Object.freeze({
   bars: { label: 'Bars per element', roles: { value: ['N_elements'] } },
 });
 
+/** The roles of `panel` the panel editor does not show (an all-atoms
+ * `aggregate` beside a per-element plot), as `{metrics, metric_refs}`, so
+ * Apply keeps them. None when the kind changes: the new kind has its own. */
+export function unlistedRoles(panel, kind) {
+  const listed = KIND_ROLES[kind]?.roles || {};
+  const pick = (o) => Object.fromEntries(Object.entries(o || {}).filter(([role]) => !(role in listed)));
+  return panel?.kind === kind
+    ? { metrics: pick(panel.metrics), metric_refs: pick(panel.metric_refs) }
+    : { metrics: {}, metric_refs: {} };
+}
+
 /** Catalog entries a role of a kind can take, by shape. */
 export function metricsFor(kind, role, catalog) {
   const shapes = KIND_ROLES[kind]?.roles?.[role] || [];
