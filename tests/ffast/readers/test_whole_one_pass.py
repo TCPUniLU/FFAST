@@ -78,6 +78,7 @@ def small_windows(monkeypatch):
     """Many windows, and a first capacity guess far too small, so the arrays grow."""
     monkeypatch.setattr(text, "WHOLE_WINDOW_BYTES", 16 * 1024)
     monkeypatch.setattr(text, "WHOLE_FIRST_GUESS", 0.2)
+    monkeypatch.setattr(text, "WHOLE_ROOM", 0.2)
 
 
 @pytest.fixture
@@ -169,3 +170,94 @@ def test_saving_mode_still_takes_the_memory_saving_path(tmp_path):
     path = write_xyz(tmp_path / "a.xyz")
     loaded = chunks.read_arrays(XyzReader, path, use_cache=False, memory_mode="saving")
     assert isinstance(loaded.arrays, IndexedArrays)
+
+
+def _is_view_with_spare_room(array):
+    array = np.asarray(array)
+    return array.base is not None and array.base.shape[0] > array.shape[0]
+
+
+def test_the_arrays_keep_their_spare_room_instead_of_being_copied(tmp_path, monkeypatch):
+    """With a parser that writes NaN itself, the room left over is never
+    written: the arrays are views of it, not 45 GB copied to cut it off."""
+    assert XyzReader.fills_missing()
+    monkeypatch.setattr(text._Growing, "_grow",
+                        lambda *a: pytest.fail("a file as dense as its first window must not grow"))
+    monkeypatch.setattr(text, "WHOLE_WINDOW_BYTES", 16 * 1024)
+    path = write_xyz(tmp_path / "a.xyz")
+    want = two_pass(path)
+    loaded = chunks.read_arrays(XyzReader, path, use_cache=False)
+    assert _is_view_with_spare_room(loaded.arrays["positions"])
+    assert_same(want, loaded.arrays)
+
+
+def test_a_parser_without_the_flag_still_gets_trimmed_copies(tmp_path, monkeypatch):
+    """An older ffast_xyz pre-fills the room with NaN, so the room holds
+    memory and is cut off by a copy, as before."""
+    monkeypatch.setattr(XyzReader, "fills_missing", staticmethod(lambda: False))
+    monkeypatch.setattr(text, "WHOLE_FIRST_GUESS", 2.0)           # much room left over
+    path = write_xyz(tmp_path / "a.xyz")
+    want = two_pass(path)
+    loaded = chunks.read_arrays(XyzReader, path, use_cache=False)
+    assert not _is_view_with_spare_room(loaded.arrays["positions"])
+    assert_same(want, loaded.arrays)
+
+
+def test_arrays_that_cannot_be_made_go_to_the_memory_saving_path(tmp_path, monkeypatch):
+    def refuse(self, atoms, frames):
+        raise MemoryError("Unable to allocate")
+    monkeypatch.setattr(text._Growing, "room", refuse)
+    path = write_xyz(tmp_path / "a.xyz")
+    loaded = chunks.read_arrays(XyzReader, path, use_cache=False)
+    assert isinstance(loaded.arrays, IndexedArrays)
+    assert len(loaded.frames) == 600
+
+
+def test_the_window_digests_equal_the_digests_of_the_finished_arrays(tmp_path, small_windows, monkeypatch):
+    """The kept copy's digests are taken window by window while parsing, also
+    when the arrays grow; each must equal the digest of the whole array, and
+    the write must not hash those arrays again."""
+    import json
+
+    from ffast.cache import fingerprint
+
+    hashed = []
+    real = fingerprint.array_digest
+    monkeypatch.setattr(fingerprint, "array_digest", lambda a: hashed.append(np.asarray(a).shape) or real(a))
+    path = write_xyz(tmp_path / "a.xyz")
+    loaded = chunks.read_arrays(XyzReader, path)
+    arrays = loaded.arrays
+    [meta] = list(frame_cache.CACHE_DIR.rglob("meta.json"))          # the kept copy
+    digests = json.loads(meta.read_text())["digests"]
+    for key in ("numbers", "positions", "forces:forces", "cell"):
+        assert digests[key] == fingerprint._hash_array(np.asarray(arrays[key])), key
+    big = {np.asarray(arrays[k]).shape for k in ("positions", "forces:forces", "cell")}
+    assert not big & set(hashed), "the write hashed an array the window digests covered"
+
+
+def test_a_failure_while_hashing_windows_only_moves_the_hashing_to_the_write(tmp_path, monkeypatch):
+    import json
+
+    from ffast.cache import fingerprint
+
+    def broken(self, rows):
+        raise RuntimeError("hash failed")
+    monkeypatch.setattr(fingerprint.ChunkHasher, "update", broken)
+    path = write_xyz(tmp_path / "a.xyz")
+    loaded = chunks.read_arrays(XyzReader, path)
+    [meta] = list(frame_cache.CACHE_DIR.rglob("meta.json"))
+    digests = json.loads(meta.read_text())["digests"]
+    monkeypatch.undo()
+    assert digests["positions"] == fingerprint._hash_array(np.asarray(loaded.arrays["positions"]))
+
+
+@pytest.mark.parametrize("path", EXAMPLES)
+def test_every_kept_digest_of_an_example_file_equals_its_array(path, small_windows):
+    import json
+
+    from ffast.cache import fingerprint
+
+    loaded = chunks.read_arrays(XyzReader, path)
+    [meta] = list(frame_cache.CACHE_DIR.rglob("meta.json"))
+    for key, digest in json.loads(meta.read_text())["digests"].items():
+        assert digest == fingerprint._hash_array(np.asarray(loaded.arrays[key])), key

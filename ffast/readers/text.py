@@ -321,24 +321,26 @@ def _seal(arrays, digests):
                 fingerprint.remember_digest(value, digests[key])
 
 
-def _write_kept(folder, files, arrays):
+def _write_kept(folder, files, arrays, known=None):
     """Write each array to its file and take its column digest, several
-    arrays at once (writing and hashing both let go of the GIL)."""
+    arrays at once (writing and hashing both let go of the GIL). ``known``
+    digests, taken while the arrays were filled, are not taken again."""
     from concurrent.futures import ThreadPoolExecutor
 
     from ffast.cache import fingerprint
+    known = known or {}
 
     def one(key):
         value = np.asarray(arrays[key])
         np.save(folder / files[key], value, allow_pickle=False)
-        return fingerprint.array_digest(value)
+        return known[key] if key in known else fingerprint.array_digest(value)
     with ThreadPoolExecutor(max_workers=max(1, min(8, len(files)))) as pool:
         return dict(zip(files, pool.map(one, files)))
 
 
-def _kept_save(reader_class, path, step, arrays, n_file_frames):
+def _kept_save(reader_class, path, step, arrays, n_file_frames, known=None):
     """Keep ``arrays`` for the next load. The column digest of each array,
-    or None when nothing was kept."""
+    or None when nothing was kept. ``known``: digests already taken."""
     name = os.path.basename(path)
     tmp = None
     try:
@@ -361,7 +363,7 @@ def _kept_save(reader_class, path, step, arrays, n_file_frames):
         shutil.rmtree(tmp, ignore_errors=True)
         tmp.mkdir()
         files = {key: f"a{i}.npy" for i, key in enumerate(arrays)}
-        digests = _write_kept(tmp, files, arrays)
+        digests = _write_kept(tmp, files, arrays, known)
         (tmp / _META).write_text(json.dumps({
             "path": source, "reader": reader_class.name, "step": step,
             "n_file_frames": n_file_frames, "arrays": files,
@@ -527,7 +529,8 @@ def _read_one_pass(reader_class, path, contents, progress, workers, use_cache):
 # memory, and whether the arrays fit is estimated from the first window.
 WHOLE_WINDOW_BYTES = 128 * 2**20   # text found and parsed at a time (as the memory-saving scan)
 WHOLE_MARGIN = 1.25                # the projected arrays times this must fit the budget
-WHOLE_FIRST_GUESS = 1.05           # the arrays are made this much larger than projected
+WHOLE_FIRST_GUESS = 1.05           # the arrays are made this much larger than projected ...
+WHOLE_ROOM = 1.25                  # ... or this much when the room left over holds no memory
 
 
 class _DoesNotFit(Exception):
@@ -614,13 +617,77 @@ class _Growing:
         return self.atoms * per_atom + self.frames * per_frame
 
     def result(self):
-        """The arrays cut to what was filled (a copy when much room is left over)."""
+        """The arrays cut to what was filled. Views when the parser fills
+        missing values itself: the room left over was never written, so it
+        holds no memory, and copying 45 GB to cut it off took 8 s on one core
+        on MeluXina (2026-11-22). Otherwise the room holds NaN, and a copy
+        drops it when much is left over."""
         out = {}
         for key, value in self.arrays.items():
             rows = self.frames if key == "cell" else self.atoms
             kept = value[:rows]
-            out[key] = kept.copy() if value.shape[0] > rows * 1.1 + 16 else kept
+            spare = value.shape[0] > rows * 1.1 + 16
+            out[key] = kept.copy() if spare and not self.fills_missing else kept
         return out
+
+
+class _WindowDigests:
+    """The column digests of the arrays a one-pass load fills, taken window by
+    window while the next window is parsed, so the kept copy need not hash
+    45 GB after the load (2026-11-24). Windows are hashed in order on one
+    thread, the arrays of a window side by side (``hashlib`` lets go of the
+    GIL). A column that first appears after the first window is not followed;
+    its digest is taken when the copy is written, as before. A failure here
+    costs only that: the digests are then taken when the copy is written."""
+
+    def __init__(self, threads=4):
+        from concurrent.futures import ThreadPoolExecutor
+        self._order = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ffast-window-hash")
+        self._side = ThreadPoolExecutor(max_workers=threads, thread_name_prefix="ffast-window-hash")
+        self._hashers = None
+        self._pending = None
+        self._failed = False
+
+    def add(self, views):
+        """Hash this window's filled rows ``{key: view}`` after the previous window."""
+        from ffast.cache.fingerprint import ChunkHasher
+        if self._failed or not self._wait():
+            return
+        if self._hashers is None:
+            self._hashers = {k: ChunkHasher(v.shape[1:], v.dtype) for k, v in views.items()}
+        followed = [(self._hashers[k], v) for k, v in views.items() if k in self._hashers]
+        for key in views.keys() - self._hashers.keys():
+            self._hashers[key] = None                 # appeared late: not followed
+
+        def job():
+            list(self._side.map(lambda pair: pair[0].update(pair[1]), followed))
+        self._pending = self._order.submit(job)
+
+    def _wait(self):
+        future, self._pending = self._pending, None
+        if future is not None:
+            try:
+                future.result()
+            except Exception as exc:              # the copy hashes instead
+                logger.debug("Window digests stopped: %s", exc)
+                self._failed = True
+        return not self._failed
+
+    def digests(self, arrays):
+        """``{key: column digest}`` for every followed array of ``arrays``
+        whose rows were all hashed."""
+        if not self._wait() or not self._hashers:
+            return {}
+        out = {}
+        for key, h in self._hashers.items():
+            value = arrays.get(key)
+            if h is not None and value is not None and h.rows == np.asarray(value).shape[0]:
+                out[key] = h.hexdigest()
+        return out
+
+    def close(self):
+        self._order.shutdown(wait=True)
+        self._side.shutdown(wait=True)
 
 
 def _read_whole_one_pass(reader_class, path, contents, progress, workers, use_cache):
@@ -647,6 +714,7 @@ def _read_whole_one_pass(reader_class, path, contents, progress, workers, use_ca
     size = os.path.getsize(path)
     threads = fast_threads() if workers is None else max(1, int(workers))
     grow = _Growing(contents, _fills_missing(reader_class))
+    window_digests = _WindowDigests() if use_cache else None
     values = _Values(0)
     filled: set = set()
     counts_seen: list = []
@@ -661,8 +729,17 @@ def _read_whole_one_pass(reader_class, path, contents, progress, workers, use_ca
         if not grow.arrays:
             # First window: a guess at the whole file, refined below.
             share = size / max(1, text_bytes)
-            grow.room(max(n_atoms, int(n_atoms * share * WHOLE_FIRST_GUESS)),
-                      max(n_frames, int(n_frames * share * WHOLE_FIRST_GUESS)))
+            # Room that is never written holds no memory when the parser
+            # fills missing values itself: then guess with the margin the
+            # budget reserves (WHOLE_ROOM), so a file whose later frames are denser
+            # than its first window is not copied into bigger arrays (8 s on
+            # one core for 90 GB on MeluXina, 2026-11-22).
+            guess = WHOLE_ROOM if grow.fills_missing else WHOLE_FIRST_GUESS
+            try:
+                grow.room(max(n_atoms, int(n_atoms * share * guess)),
+                          max(n_frames, int(n_frames * share * guess)))
+            except MemoryError as exc:
+                raise _DoesNotFit(f"its arrays could not be made ({exc})") from None
         else:
             grow.room(n_atoms, n_frames)
         views = grow.views(n_atoms, n_frames)
@@ -679,6 +756,8 @@ def _read_whole_one_pass(reader_class, path, contents, progress, workers, use_ca
                 grow.add_atom_key(key, column)
             grow.arrays[key][grow.atoms + np.asarray(rows, dtype=np.int64)] = column
             filled.add(key)
+        if window_digests is not None:
+            window_digests.add(views)
         grow.atoms += n_atoms
         grow.frames += n_frames
         counts_seen.append(np.asarray(counts, dtype=np.int64))
@@ -755,7 +834,8 @@ def _read_whole_one_pass(reader_class, path, contents, progress, workers, use_ca
             _tables[(reader_class.name, os.path.abspath(path))] = (ident, table)
 
         if use_cache:
-            digests = _kept_save(reader_class, path, 1, arrays, total)
+            known = window_digests.digests(arrays) if window_digests is not None else {}
+            digests = _kept_save(reader_class, path, 1, arrays, total, known=known)
             if digests is not None:
                 _seal(arrays, digests)
         lease = reserved[1] if reserved else None
@@ -764,6 +844,8 @@ def _read_whole_one_pass(reader_class, path, contents, progress, workers, use_ca
                 owner.retain(value, lease)
         return arrays, contents, list(range(total)), total
     finally:
+        if window_digests is not None:
+            window_digests.close()
         if reserved:
             reserved[0].__exit__(None, None, None)
 
