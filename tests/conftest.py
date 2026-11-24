@@ -11,6 +11,11 @@ def _live_records_in_tmp(tmp_path_factory):
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("FFAST_REFERENCES", str(tmp_path_factory.mktemp("references")))
         mp.setenv("FFAST_RUN_WITH_FFAST", str(tmp_path_factory.mktemp("rwf") / "run-with-ffast.json"))
+        # The parsed cache keeps 20 GiB of the disk free by default. On a disk
+        # near that line, batches were written or not as free space moved, and
+        # cache tests failed at random (2026-11-24). Tests of the rule set
+        # their own amount.
+        mp.setenv("FFAST_CACHE_KEEP_FREE_BYTES", "0")
         yield
 
 
