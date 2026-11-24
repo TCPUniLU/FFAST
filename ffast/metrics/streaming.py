@@ -275,10 +275,12 @@ def expression_reduction(fn, node, ns, value, parts, gap):
 def smooth(value, window):
     from ffast.metrics.transforms import _smooth
 
-    value = asarray(value, dtype=float).ravel()
+    value = asarray(value, dtype=float)
+    if value.ndim != 2:          # a table (frames × elements) keeps its columns
+        value = value.ravel()
     w = max(1, min(int(window), len(value)))
     return BatchedArray(
-        (max(0, len(value) - w + 1),),
+        (max(0, len(value) - w + 1), *value.shape[1:]),
         float,
         lambda a, b: _smooth(np.asarray(value[a : b + w - 1]), w),
     )

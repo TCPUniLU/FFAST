@@ -550,3 +550,48 @@ def test_the_built_in_tabs_name_only_unit_settings_that_exist():
                     if isinstance(panel.get(key), list):
                         slots.add(panel[key][1])
     assert slots <= {"energyUnit", "forceUnit"}, slots
+
+
+def test_atomic_errors_timelines_smooth_each_element_beside_all_atoms():
+    """Atomic Errors row 2: per-element MAE/RMSE timelines, each with the
+    all-atoms line (role `aggregate`) and one shared smoothing control. The
+    window smooths each element's column on its own; a frame without the
+    element is a gap left out of its windows."""
+    import numpy as np
+
+    import ffast.metrics.builtin  # noqa: F401
+    from ffast.metrics.execution import InputSource
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import default_registry
+
+    tab = {t.name: t for t in load_builtin_tabs()}["Atomic Errors"]
+    timelines = [p for p in tab.panels if p.kind == "timeline"]
+    assert [p.title for p in timelines] == ["Forces MAE timeline per element",
+                                            "Forces RMSE timeline per element"]
+    assert all(p.controls == ["smoothing"] and p.hidden_params == ["window"] for p in timelines)
+    compile_tabs_metrics(load_builtin_tabs())
+
+    # 3 frames: [H, C], [H, H], [C, H]; error 1 on each H component, 3 on C.
+    elements = np.array([1, 6, 1, 1, 6, 1])
+    offsets = np.array([0, 2, 4, 6])
+    true = np.zeros((6, 3))
+    pred = np.where(elements[:, None] == 1, 1.0, 3.0) * np.ones((6, 3))
+    pred[2] = 2.0                                  # frame 1's first H: error 2
+
+    class Source(InputSource):
+        values = {"reference.forces": true, "prediction.forces": pred,
+                  "offsets": offsets, "reference.elements": elements}
+
+        def get(self, metric_id, local_key, ref):
+            return ref in self.values, self.values.get(ref)
+
+        def identity(self, ref):
+            return "atomic-timelines|" + ref
+
+    mae = timelines[0]
+    ex = InProcessExecutor(default_registry)
+    y = np.asarray(ex.run(resolve_ref(mae.metrics["y"]), Source(), {"window": 2}).values)
+    every = np.asarray(ex.run(resolve_ref(mae.metrics["aggregate"]), Source(), {"window": 2}).values)
+    # Per frame: H = [1, 1.5, 1], C = [3, gap, 3]; all atoms = [2, 1.5, 2].
+    np.testing.assert_allclose(y, [[1.25, 3.0], [1.25, 3.0]])
+    np.testing.assert_allclose(every, [1.75, 1.75])

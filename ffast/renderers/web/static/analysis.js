@@ -2770,7 +2770,8 @@ export class AnalysisManager {
       // A point that is not a frame carries its frame in its data (a parity dot).
       // A live run's points are its scored frames, in order (ADR 0087).
       // A thinned trace draws some of its points (thin.js): back to the full data.
-      const drawnAt = fullIndex(el, pt.curveNumber, pt.pointIndex);
+      // A timeline of tables also draws dots of some points: x is the point.
+      const drawnAt = info.xIsPoint ? pt.x : fullIndex(el, pt.curveNumber, pt.pointIndex);
       // A thinned view's points name their frames (ADR 0099).
       const point = src?.thin ? src.thin.idx[drawnAt] : drawnAt;
       const index = info.frameField != null ? pt.customdata?.[info.frameField]

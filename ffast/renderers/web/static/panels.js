@@ -491,32 +491,53 @@ function buildTableTimeline(spec, series, ctx) {
   const u = ctx.units || {};
   const order = ctx.elementOrder || [];
   const selected = ctx.selectedElements || ['All'];
-  const shown = selected.includes('All') ? order : order.filter((z) => selected.includes(z));
+  // With an all-atoms metric (role `aggregate`), All draws that line, as the
+  // per-element distribution does, and elements draw only when ticked;
+  // without one, All means every element.
+  const withAll = !!spec.metrics?.aggregate;
+  const shown = selected.includes('All') && !withAll ? order : order.filter((z) => selected.includes(z));
   const multiSeries = seriesWith(series, 'y').length > 1;
   const traces = [];
   const curveSeries = [];
+  let lines = 0;
+  // A line, and dots for its values with a gap on both sides: a line draws
+  // nothing there, so a rare element (iodine in a few frames) would not show.
+  // The dots share the line's legend entry; x is the point's index.
+  const add = (i, y, color, dash, name) => {
+    const group = `curve${lines++}`;
+    traces.push({ x: y.map((_, f) => f), y, type: 'scatter', mode: 'lines', thin: 'line',
+      line: { color, width: 1.5, dash }, name, legendgroup: group });
+    curveSeries.push(i);
+    const lone = [];
+    for (let f = 0; f < y.length; f++) {
+      if (Number.isFinite(y[f]) && !Number.isFinite(y[f - 1]) && !Number.isFinite(y[f + 1])) lone.push(f);
+    }
+    if (!lone.length) return;
+    traces.push({ x: lone, y: lone.map((f) => y[f]), type: 'scatter', mode: 'markers', thin: 'points',
+      marker: { color, size: 5 }, name, legendgroup: group, showlegend: false });
+    curveSeries.push(i);
+  };
   (series || []).forEach((s, i) => {
     if (!isTable(s.data.y)) return;
+    const dash = DASHES[i % DASHES.length];
+    const suffix = multiSeries && s.name ? ` — ${s.name}` : '';
+    const all = withAll && selected.includes('All') ? values1d(s.data.aggregate) : [];
+    // grey behind the elements' lines; alone, the prediction's colour
+    if (all.length) add(i, Array.from(all), shown.length ? plotTheme().ink2 : paint(ctx, s, i), dash, `All${suffix}`);
     const [frames, columns] = s.data.y.nd.shape;
     const values = s.data.y.nd.values;
     for (const z of shown) {
       const col = order.indexOf(z);
       if (col < 0 || col >= columns) continue;
-      traces.push({
-        x: Array.from({ length: frames }, (_, f) => f),
-        y: Array.from({ length: frames }, (_, f) => values[f * columns + col]),
-        type: 'scatter', mode: 'lines', thin: 'line',
-        line: { color: elementColourOn(z, plotTheme().surface), width: 1.5, dash: DASHES[i % DASHES.length] },
-        name: `${elementSymbol(z)}${multiSeries && s.name ? ` — ${s.name}` : ''}`,
-      });
-      curveSeries.push(i);
+      add(i, Array.from({ length: frames }, (_, f) => values[f * columns + col]),
+        elementColourOn(z, plotTheme().surface), dash, `${elementSymbol(z)}${suffix}`);
     }
   });
-  const layout = withLegend(baseLayout(), Math.max(2, traces.length));
+  const layout = withLegend(baseLayout(), Math.max(2, lines));
   layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
   layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
   return { traces, layout, peaks: [], extraHeight: 0, peakUnit: u.y, peaksEligible: false,
-    subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
+    subInfo: { perFrame: true, curveSeries, xIsPoint: true }, unitAxes: { x: 'x', y: 'y' } };
 }
 
 /**

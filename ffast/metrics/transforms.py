@@ -54,11 +54,17 @@ def _smooth(values, window):
     "valid")``). Window is clamped to the series length, so an over-large window
     degrades to a single mean rather than emitting nothing. A gap (NaN) is left
     out of each window's mean and stays in its place, so the frames keep their
-    positions; a window of gaps only is a gap."""
+    positions; a window of gaps only is a gap. A table (frames × elements) is
+    smoothed column by column: each element is its own series."""
     if isinstance(values, BatchedArray):
         from ffast.metrics.streaming import smooth
         return smooth(values, window)
-    v = np.asarray(values, dtype=np.float64).ravel()
+    v = np.asarray(values, dtype=np.float64)
+    if v.ndim == 2:
+        if not v.size:
+            return v
+        return np.stack([_smooth(v[:, c], window) for c in range(v.shape[1])], axis=1)
+    v = v.ravel()
     w = int(max(1, min(window, len(v)))) if len(v) else 1
     if w <= 1:
         return v

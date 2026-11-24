@@ -5,7 +5,8 @@
 # table binds per-element metrics via the generic grouped_table kind — the
 # selector is the colour/legend channel (Vega-Lite grouping). No bespoke kinds or
 # inline reduction; the element picker is the only custom piece. The legacy
-# modules/atomicErrors.py was retired once this reached parity.
+# modules/atomicErrors.py was retired once this reached parity. Row 2 adds
+# per-element MAE/RMSE timelines with a shared smoothing control.
 [[tabs]]
 name = "Atomic Errors"
 start = false
@@ -15,6 +16,7 @@ selector = "atomic"
 kind = "grouped_density"
 row = 0
 col = 0
+colspan = 2
 title = "Forces MAE distribution"
 x_label = ["Forces MAE", "forceUnit"]
 tooltip = "Per-structure force MAE distribution per selected element."
@@ -27,6 +29,7 @@ tooltip = "Per-structure force MAE distribution per selected element."
 kind = "grouped_table"
 row = 1
 col = 0
+colspan = 2
 title = "Atomic Errors"
   [tabs.panels.metrics.mae]
   metric = "ffast.force_difference[element;component;mae]"
@@ -36,3 +39,38 @@ title = "Atomic Errors"
   metric = "ffast.force_difference[dataset;component;mae]"
   [tabs.panels.metrics.rmse_all]
   metric = "ffast.force_difference[dataset;component;rmse]"
+
+# --- row 2: per-element MAE / RMSE timelines -------------------------------- #
+# A line per element ticked in the picker; All draws the all-atoms line. One
+# shared smoothing control: smooth works column by column on these tables.
+[[tabs.panels]]
+kind = "timeline"
+row = 2
+col = 0
+title = "Forces MAE timeline per element"
+y_label = ["Forces MAE", "forceUnit"]
+tooltip = "Force MAE of each structure, per selected element; All is every atom."
+hidden_params = ["window"]
+controls = ["smoothing"]
+  [tabs.panels.metrics.y]
+  metric = "ffast.force_difference[structure+element;component;mae]"
+  transform = "smooth"
+  [tabs.panels.metrics.aggregate]
+  metric = "ffast.force_difference[structure;component;mae]"
+  transform = "smooth"
+
+[[tabs.panels]]
+kind = "timeline"
+row = 2
+col = 1
+title = "Forces RMSE timeline per element"
+y_label = ["Forces RMSE", "forceUnit"]
+tooltip = "Force RMSE of each structure, per selected element; All is every atom."
+hidden_params = ["window"]
+controls = ["smoothing"]
+  [tabs.panels.metrics.y]
+  metric = "ffast.force_difference[structure+element;component;rmse]"
+  transform = "smooth"
+  [tabs.panels.metrics.aggregate]
+  metric = "ffast.force_difference[structure;component;rmse]"
+  transform = "smooth"

@@ -40,3 +40,34 @@ def test_smoothing_keeps_each_gap_in_its_place():
 def test_a_summary_of_only_gaps_has_no_value():
     out = _run(TRANSFORMS["rmse"], np.array([np.nan, np.nan]))
     assert np.isnan(out)
+
+
+# A per frame and element table: each element's column is its own series.
+TABLE = np.array([[1.0, 10.0], [3.0, np.nan], [5.0, 30.0], [7.0, 50.0]])
+
+
+def test_smoothing_a_table_smooths_each_column_on_its_own():
+    out = _smooth(TABLE, 2)
+    assert out.shape == (3, 2)
+    np.testing.assert_allclose(out[:, 0], [2.0, 4.0, 6.0])
+    # The gap is left out of its windows; the other column never mixes in.
+    np.testing.assert_allclose(out[:, 1], [10.0, 30.0, 40.0])
+
+
+def test_a_table_column_of_only_gaps_stays_a_gap():
+    table = TABLE.copy()
+    table[:, 1] = np.nan
+    out = _smooth(table, 2)
+    assert np.isnan(out[:, 1]).all()
+    np.testing.assert_allclose(out[:, 0], [2.0, 4.0, 6.0])
+
+
+def test_smoothing_a_streamed_table_matches_the_table_in_memory():
+    from ffast.io.batched import BatchedArray
+    rng = np.random.default_rng(0)
+    table = rng.normal(size=(40, 3))
+    table[rng.random(table.shape) < 0.2] = np.nan
+    streamed = BatchedArray(table.shape, float, lambda a, b: table[a:b], batch_rows=7)
+    out = _smooth(streamed, 5)
+    assert out.shape == (36, 3)
+    np.testing.assert_allclose(np.asarray(out), _smooth(table, 5), equal_nan=True)

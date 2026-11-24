@@ -1168,12 +1168,51 @@ CASES = {
         "  const table = (values) => ({nd: {values, shape: [3, 2]}});"   # 3 frames x [H, C]
         "  const ser = (name, values) => ({name, datasetFp: 'D', modelFp: name, data: {y: table(values)}});"
         "  const two = [ser('MACE', [0.1, N, 0.2, 0.5, N, 0.6]), ser('SchNet', [0.3, 0.4, N, N, 0.7, 0.8])];"
-        "  const look = (b) => b.traces.map(t => [t.name, t.line.color, t.line.dash, t.y.map(v => Number.isFinite(v) ? v : null)]);"
+        "  const look = (b) => b.traces.filter(t => t.mode === 'lines')"
+        "    .map(t => [t.name, t.line.color, t.line.dash, t.y.map(v => Number.isFinite(v) ? v : null)]);"
+        "  const lineSeries = (b) => b.subInfo.curveSeries.filter((_, k) => b.traces[k].mode === 'lines');"
         "  const all = pn.buildPanel({kind: 'timeline'}, two, {elementOrder: [1, 6], selectedElements: ['All']});"
         "  const carbon = pn.buildPanel({kind: 'timeline'}, [two[0]], {elementOrder: [1, 6], selectedElements: [6]});"
-        "  return {all: look(all), carbon: look(carbon), curveSeries: all.subInfo.curveSeries,"
+        "  return {all: look(all), carbon: look(carbon), curveSeries: lineSeries(all),"
         "    peaks: all.peaksEligible || carbon.peaksEligible, legend: carbon.layout.showlegend,"
         "    colours: [ec.elementColourOn(1, th.plotTheme().surface), ec.elementColourOn(6, th.plotTheme().surface)]};"
+        "})()"
+    ),
+    # A rare element (iodine in 2 of 6 frames) has no neighbour to join: its
+    # lone values are drawn as dots, in the line's legend group.
+    "timeline_table_rare": (
+        "(() => {"
+        "  const N = NaN;"
+        "  const y = {nd: {values: [0.1, N, 0.2, 0.5, 0.3, N, 0.2, 0.9, 0.1, N, 0.4, N], shape: [6, 2]}};"
+        "  const b = pn.buildPanel({kind: 'timeline'}, [{name: 'M', datasetFp: 'D', modelFp: 'M', data: {y}}],"
+        "    {elementOrder: [1, 53], selectedElements: ['All']});"
+        "  return {traces: b.traces.map(t => ({name: t.name, mode: t.mode, x: [...t.x],"
+        "    group: t.legendgroup, legend: t.showlegend !== false, colour: t.line?.color || t.marker?.color})),"
+        "    curveSeries: b.subInfo.curveSeries, xIsPoint: b.subInfo.xIsPoint};"
+        "})()"
+    ),
+    # With an all-atoms metric (role `aggregate`), All in the picker draws it,
+    # as the per-element distribution does; elements draw only when ticked.
+    "timeline_table_all": (
+        "(() => {"
+        "  const N = NaN;"
+        "  const table = (values) => ({nd: {values, shape: [3, 2]}});"
+        "  const line = (values) => ({nd: {values, shape: [3]}});"
+        "  const ser = (name, values, all) => ({name, datasetFp: 'D', modelFp: name,"
+        "    data: {y: table(values), aggregate: line(all)}});"
+        "  const two = [ser('MACE', [0.1, N, 0.2, 0.5, N, 0.6], [0.1, 0.35, 0.6]),"
+        "    ser('SchNet', [0.3, 0.4, N, N, 0.7, 0.8], [0.35, N, 0.75])];"
+        "  const spec = {kind: 'timeline', metrics: {y: 'a', aggregate: 'b'}};"
+        "  const look = (b) => b.traces.filter(t => t.mode === 'lines')"
+        "    .map(t => [t.name, t.line.color, t.line.dash, t.y.map(v => Number.isFinite(v) ? v : null)]);"
+        "  const lineSeries = (b) => b.subInfo.curveSeries.filter((_, k) => b.traces[k].mode === 'lines');"
+        "  const ctx = (sel) => ({elementOrder: [1, 6], selectedElements: sel});"
+        "  const alone = pn.buildPanel(spec, two, ctx(['All']));"
+        "  const withH = pn.buildPanel(spec, two, ctx(['All', 1]));"
+        "  const noAll = pn.buildPanel(spec, [two[0]], ctx([6]));"
+        "  return {alone: look(alone), withH: look(withH), noAll: look(noAll),"
+        "    curveSeries: lineSeries(withH), ink2: th.plotTheme().ink2,"
+        "    h: ec.elementColourOn(1, th.plotTheme().surface)};"
         "})()"
     ),
 
@@ -2545,6 +2584,34 @@ def test_a_timeline_draws_a_table_as_a_line_per_element(results):
     assert r["carbon"] == [["C", c, "solid", [None, 0.5, 0.6]]]
     assert r["curveSeries"] == [0, 0, 1, 1]
     assert r["peaks"] is False and r["legend"] is True
+
+
+def test_a_rare_elements_lone_values_are_drawn_as_dots(results):
+    r = results["timeline_table_rare"]
+    h, i_line, i_dots = r["traces"]
+    assert (h["name"], h["mode"]) == ("H", "lines")          # dense: a line, no dots
+    assert (i_line["name"], i_line["mode"]) == ("I", "lines")
+    assert i_dots["mode"] == "markers" and i_dots["x"] == [1, 3]   # frames with iodine
+    assert i_dots["group"] == i_line["group"] and not i_dots["legend"]
+    assert i_dots["colour"] == i_line["colour"]
+    assert r["curveSeries"] == [0, 0, 0]
+    assert r["xIsPoint"] is True       # a click on a dot opens the frame at its x
+
+
+def test_a_timeline_of_tables_draws_its_all_atoms_line_when_all_is_picked(results):
+    r = results["timeline_table_all"]
+    # All alone: one all-atoms line per prediction, in the prediction's colour.
+    assert [t[0] for t in r["alone"]] == ["All — MACE", "All — SchNet"]
+    assert [t[3] for t in r["alone"]] == [[0.1, 0.35, 0.6], [0.35, None, 0.75]]
+    assert [t[2] for t in r["alone"]] == ["solid", "dash"]
+    assert all(t[1] != r["ink2"] for t in r["alone"])
+    # All with an element: the all-atoms line turns grey behind the element's.
+    assert r["withH"] == [
+        ["All — MACE", r["ink2"], "solid", [0.1, 0.35, 0.6]], ["H — MACE", r["h"], "solid", [0.1, 0.2, None]],
+        ["All — SchNet", r["ink2"], "dash", [0.35, None, 0.75]], ["H — SchNet", r["h"], "dash", [0.3, None, 0.7]]]
+    assert r["curveSeries"] == [0, 0, 1, 1]
+    # Without All, only the ticked elements.
+    assert [t[0] for t in r["noAll"]] == ["C"]
 
 
 def test_every_panel_kind_shows_a_gap_as_a_gap_never_a_number(results):

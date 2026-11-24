@@ -767,8 +767,10 @@ async def test_a_per_structure_and_element_formula_plots_a_line_per_element_and_
                     "() => { const el = [...document.querySelectorAll('.tabpanel.active .js-plotly-plot')]"
                     "  .find((d) => d.data && d.data.length && d.data[0].y && d.data[0].y.length === %d);"
                     "  if (!el) return null;"
-                    "  return [el.data.map((t) => t.name),"
-                    "    el.data.reduce((n, t) => n + Array.from(t.y).filter((v) => !Number.isFinite(v)).length, 0)]; }"
+                    # the lines; a lone value also gets a dot, in the line's legend entry
+                    "  const lines = el.data.filter((t) => t.mode === 'lines');"
+                    "  return [lines.map((t) => t.name),"
+                    "    lines.reduce((n, t) => n + Array.from(t.y).filter((v) => !Number.isFinite(v)).length, 0)]; }"
                     % len(frames))
                 names, gaps = await lines.json_value()
                 from ase.data import chemical_symbols
