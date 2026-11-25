@@ -130,3 +130,42 @@ def test_a_slurm_job_without_a_visible_limit_falls_back_to_free_memory(monkeypat
         owner = shared.Budget()
     assert owner.limit == 8 * 2**30          # the workstation rule: 80% of total memory
     assert "FFAST_MEMORY_BYTES" in caplog.text
+
+
+def test_free_memory_is_asked_outside_the_lock_and_only_for_large_requests(monkeypatch):
+    """Asking took seconds on a busy cluster node; every thread that wanted
+    memory waited behind the lock for it (MeluXina, 2026-11-24)."""
+    import threading
+
+    owner = resources.Budget(ram_bytes=64 * 2**20)
+    asked = []
+
+    def free():
+        other = []
+
+        def probe():
+            other.append(owner.lock.acquire(blocking=False))
+            if other[0]:
+                owner.lock.release()
+
+        t = threading.Thread(target=probe)
+        t.start()
+        t.join()
+        asked.append(other[0])
+        return 2**20
+
+    monkeypatch.setattr(resources, "available_memory", free)
+    small = owner.block_bytes
+    with owner.reserve(small):
+        pass
+    owner.check(small)
+    owner.retain(np.zeros(small // 8))
+    assert asked == []
+    with pytest.raises(NotEnoughMemory):
+        owner.check(small + 1)
+    with pytest.raises(NotEnoughMemory):
+        with owner.reserve(small + 1):
+            pass
+    with pytest.raises(NotEnoughMemory):
+        owner.retain(np.zeros(small // 8 + 1))
+    assert asked == [True, True, True]

@@ -104,7 +104,17 @@ class Budget:
     def block_bytes(self):
         return max(1024, min(16 * MiB, self.limit // 16))
 
-    def _room(self, size):
+    def _free(self, size):
+        """Memory free now, for a request above one block; None below it.
+
+        Asked before the lock is taken: a busy server (dozens of threads
+        working) made one ask take 3.6-6.5 s, and every other thread that
+        wanted memory waited behind the lock for it (MeluXina, 2026-11-24).
+        A request of at most one block is not checked against what other
+        processes use; the limit still applies to it."""
+        return available_memory() if size > self.block_bytes else None
+
+    def _room(self, size, free=None):
         while self.cache and self.used + self.cache_bytes + size > self.limit:
             _, (_, n) = self.cache.popitem(last=False)
             self.cache_bytes -= n
@@ -117,7 +127,7 @@ class Budget:
                 pass
         # Check current headroom as well: another process can take memory.
         if self.used + self.cache_bytes + size > self.limit or (
-            size > 0 and self.pending + size > available_memory()
+            size > 0 and free is not None and self.pending + size > free
         ):
             raise NotEnoughMemory(
                 f"This operation needs {size / MiB:.1f} MiB of working memory; "
@@ -133,8 +143,10 @@ class Budget:
             return self.used + int(size) <= self.limit
 
     def check(self, size):
+        size = int(size)
+        free = self._free(size)
         with self.lock:
-            self._room(int(size))
+            self._room(size, free)
 
     def register_cache(self, evict):
         with self.lock:
@@ -143,8 +155,9 @@ class Budget:
     @contextmanager
     def reserve(self, size):
         size = int(size)
+        free = self._free(size)
         with self.lock:
-            self._room(size)
+            self._room(size, free)
             self.used += size
             self.pending += size
         lease = _Lease(size)
@@ -163,12 +176,15 @@ class Budget:
         while isinstance(getattr(base, "base", None), np.ndarray):
             base = base.base
         key = id(base)
+        size = base.nbytes
+        free = None
+        if key not in self._arrays:
+            free = self._free(size - (min(size, lease.remaining) if lease is not None else 0))
         with self.lock:
             if key in self._arrays:
                 return array
-            size = base.nbytes
             credit = min(size, lease.remaining) if lease is not None else 0
-            self._room(size - credit)
+            self._room(size - credit, free)
             self.used += size - credit
             if lease is not None:
                 lease.remaining -= credit
@@ -193,6 +209,7 @@ class Budget:
 
     def keep(self, key, value, size):
         # Cache at most a quarter of RAM; processing buffers have priority.
+        free = self._free(size) if size <= self.limit // 4 else None
         with self.lock:
             old = self.cache.pop(key, None)
             if old:
@@ -203,7 +220,7 @@ class Budget:
                 _, (_, n) = self.cache.popitem(last=False)
                 self.cache_bytes -= n
             try:
-                self._room(size)
+                self._room(size, free)
             except NotEnoughMemory:
                 return
             self.cache[key] = (value, size)
