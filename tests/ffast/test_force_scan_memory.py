@@ -153,6 +153,37 @@ def test_parity_density_with_bad_forces_in_ram_keeps_every_bit(workspace, monkey
         executor.shutdown()
 
 
+@pytest.mark.parametrize("bad", [None, np.inf, np.nan])
+def test_the_parity_density_of_forces_in_ram_needs_no_second_pass(workspace, monkeypatch, bad):
+    """The density's bins span the lowest to the highest force. A quick
+    min/max first gives them, so the pass bins every pair as it goes: the
+    second pass over every force (4-6 s on 90 GB) is gone, bits unchanged."""
+    from ffast.metrics import force_scan
+
+    monkeypatch.setattr(type(workspace), "block_bytes", property(lambda self: 32 * 1024))
+    offsets = _frames("uneven", 3000)
+    true, pred = _forces(offsets)
+    if bad is not None:
+        true[7, 2] = bad
+        pred[4000, 0] = bad
+    names = [*METRICS[:4], "ffast.force_parity_density"]
+    want = _alone(names if bad is None else names[-1:], Source(true, pred, offsets))
+    seconds = []
+    monkeypatch.setattr(force_scan, "histogram", lambda *a, **k: seconds.append(1))
+    executor = ServerExecutor(default_registry)
+    try:
+        for name in names[::-1]:
+            got = executor.run(name, Source(true, pred, offsets), {})
+            if bad is not None and name != "ffast.force_parity_density":
+                assert isinstance(got, MetricFailure), name
+                continue
+            assert not isinstance(got, MetricFailure), (name, got)
+            np.testing.assert_array_equal(np.asarray(got.values), want[name], err_msg=name)
+        assert seconds == []
+    finally:
+        executor.shutdown()
+
+
 def test_the_pass_starts_before_the_difference_table_is_built(workspace, monkeypatch):
     """The shared pass reads the reference and predicted forces, not the
     difference table: it does not wait for the table (built alongside)."""

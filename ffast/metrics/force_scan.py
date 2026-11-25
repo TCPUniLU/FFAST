@@ -195,7 +195,7 @@ def _frame_sums(values, local, equal):
     return out
 
 
-def _exact_batch(leaf, reference, predicted, offsets, equal):
+def _exact_batch(leaf, reference, predicted, offsets, equal, extent):
     """One piece of forces in RAM: the atoms of ``leaf`` for the dataset sums,
     and the whole structures that start in it."""
     start, end = leaf
@@ -224,7 +224,10 @@ def _exact_batch(leaf, reference, predicted, offsets, equal):
     m = end - start
     t, p = t[:m], p[:m]
     atom_abs, atom_sq, atom_ss = atom_abs[:m], atom_sq[:m], atom_ss[:m]
-    lo, hi = _finite_extent(t, p)
+    # The parity counts: the bins span the whole dataset's forces (``extent``,
+    # from a quick min/max first), so no second pass reads every force again.
+    counts = _bin_counts(t, p, extent)
+    lo, hi = extent
     if m:
         atom_ranges = np.array([[v.min(), v.max()] for v in (atom_abs, atom_sq, atom_ss)])
     else:
@@ -232,7 +235,8 @@ def _exact_batch(leaf, reference, predicted, offsets, equal):
     none = np.empty(0)
     return _Partial(a, b, m, atom_abs.sum(), atom_sq.sum(),
                     frame_abs, frame_rms, bad,
-                    lo, hi, np.empty(0, dtype=np.int64), none, none, none, atom_ranges, net=net)
+                    lo, hi, np.empty(0, dtype=np.int64), none, none, none, atom_ranges, net=net,
+                    parity=counts)
 
 
 def _all_finite(t, p):
@@ -256,6 +260,21 @@ def _finite_extent(t, p):
         return np.inf, -np.inf
     return (min(t[finite_pair].min(), p[finite_pair].min()),
             max(t[finite_pair].max(), p[finite_pair].max()))
+
+
+def _extent(reference, predicted, leaves):
+    """The parity density's range over every force pair, as the summary
+    gives it: the lowest and highest finite value, (0, 1) when there is
+    none, one wide when all are equal. Min and max only: a fraction of the
+    pass, read before it so the pass can bin as it goes."""
+    lo, hi = np.inf, -np.inf
+    fn = lambda leaf: _finite_extent(*_read_pair(reference, predicted, *leaf))
+    with closing(_map_batches(fn, leaves)) as parts:
+        for a, b in parts:
+            lo, hi = min(lo, a), max(hi, b)
+    if not np.isfinite(lo):
+        return 0.0, 1.0
+    return (lo, hi) if hi > lo else (lo, lo + 1.0)
 
 
 def _parallelism(maximum=4):
@@ -371,6 +390,7 @@ class _Partial:
 # bins are added into plot bins, so every count is exact; the plot's edges
 # are fine-bin edges, not the exact lowest and highest value.
 _FINE = 1200
+PARITY_BINS = 300       # the parity density is PARITY_BINS x PARITY_BINS
 
 
 @dataclass
@@ -740,8 +760,10 @@ def scan(reference, predicted, offsets, elements=None, exact=False):
             equal = bool(counts.size and counts[0] > 0 and (counts == counts[0]).all())
             if not _pairwise():
                 raise NotEnoughMemory("This NumPy sums in an unknown order")
-            fn = lambda leaf: _exact_batch(leaf, reference, predicted, offsets, equal)
             batches_in = _leaves(int(offsets[-1]), target)
+            extent = _extent(reference, predicted, batches_in)
+            fn = lambda leaf: _exact_batch(leaf, reference, predicted, offsets, equal, extent)
+            parity_counts = np.zeros(PARITY_BINS * PARITY_BINS, dtype=np.int64)
         else:
             fn = lambda batch: _summary_batch(batch, reference, predicted, offsets,
                                               elements, columns, table is not None, parity_state)
@@ -774,6 +796,8 @@ def scan(reference, predicted, offsets, elements=None, exact=False):
                         fine_ok, fine = False, None
                     else:
                         fine = _merge_fine(fine, part.parity, parity_state)
+                if exact:
+                    parity_counts += part.parity
                 part.parity = None
                 # np.minimum keeps a NaN, so a non-finite atom is seen below.
                 atom_lo = np.minimum(atom_lo, part.atom_ranges[:, 0])
@@ -831,7 +855,10 @@ def scan(reference, predicted, offsets, elements=None, exact=False):
         if hi <= lo:
             hi = lo + 1.0
         # The fine grid (11.5 MB) is not kept: only the plot's 300 x 300.
-        density = None if fine is None else parity_from_fine(fine)
+        if exact:
+            density = _density((lo, hi), parity_counts)
+        else:
+            density = None if fine is None else parity_from_fine(fine)
         fine = None
         if density is not None:
             density.flags.writeable = False
@@ -888,6 +915,12 @@ def scan(reference, predicted, offsets, elements=None, exact=False):
 def _histogram_batch(batch, reference, predicted, extent, bins):
     _, _, start, end = batch
     t, p = _read_pair(reference, predicted, start, end)
+    return _bin_counts(t, p, extent, bins)
+
+
+def _bin_counts(t, p, extent, bins=PARITY_BINS):
+    """The parity counts of the (true, predicted) pairs where both are
+    finite: bins of equal width from the lowest to the highest force."""
     lo, hi = extent
     width = (hi - lo) / bins
     if _all_finite(t, p):
@@ -900,7 +933,7 @@ def _histogram_batch(batch, reference, predicted, extent, bins):
     return np.bincount(row * bins + col, minlength=bins * bins)
 
 
-def histogram(reference, predicted, offsets, extent, bins=300):
+def histogram(reference, predicted, offsets, extent, bins=PARITY_BINS):
     """Second pass reuses global bounds; no force differences are evaluated."""
     lo, hi = extent
     width = (hi - lo) / bins
@@ -915,6 +948,13 @@ def histogram(reference, predicted, offsets, extent, bins=300):
     stop.check()
     log.info("force_batch_scan: histogram, %d batches, %d lanes, no difference calculation",
              batches, _width.get())
+    return _density(extent, counts, bins)
+
+
+def _density(extent, counts, bins=PARITY_BINS):
+    """The parity density as the metric returns it: bin centres, then counts."""
+    lo, hi = extent
+    width = (hi - lo) / bins
     return budget().retain(np.vstack((lo + (np.arange(bins) + .5) * width,
                                       counts.reshape(bins, bins))))
 
