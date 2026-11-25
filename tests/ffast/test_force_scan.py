@@ -174,11 +174,11 @@ def test_cancelled_producer_keeps_work_for_another_consumer(workspace, monkeypat
     original = force_scan.scan
     scans = []
 
-    def blocked(*args):
+    def blocked(*args, **kwargs):
         scans.append(1)
         started.set()
         assert resume.wait(5)
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(force_scan, "scan", blocked)
     executor = ServerExecutor(default_registry)
@@ -216,9 +216,9 @@ def test_all_cancelled_scan_is_not_published_and_can_retry(workspace, monkeypatc
     scans = []
     original = force_scan.scan
 
-    def counted(*args):
+    def counted(*args, **kwargs):
         scans.append(1)
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(force_scan, "scan", counted)
 
@@ -379,7 +379,7 @@ def test_unavailable_shared_storage_falls_back_for_all_waiters(workspace, monkey
     source = Source(*wrapped, offsets)
     started, resume = Event(), Event()
 
-    def refuse(*args):
+    def refuse(*args, **kwargs):
         started.set()
         assert resume.wait(5)
         raise NotEnoughMemory("No storage for additional shared summaries")

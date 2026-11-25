@@ -145,6 +145,7 @@ class ServerExecutor(MetricExecutor):
                 shared = force_scan.select(id, fn)
                 if shared is not NOT_HANDLED:
                     return shared
+                force_scan.ahead()
             except (NotEnoughMemory, MemoryError, stop.Stopped) as exc:
                 return MetricFailure(metric_id=id, traceback=str(exc) or stop.STOPPED,
                                      parameters=parameters, kind="temporary")

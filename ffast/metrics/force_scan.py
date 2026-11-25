@@ -121,6 +121,143 @@ def _difference(predicted, reference):
     return np.subtract(predicted, reference)
 
 
+# ── Forces held in RAM ────────────────────────────────────────────────────────
+# Each metric run on its own sums a whole array at once, and NumPy 2 adds it by
+# halving it again and again (pairwise summation). A pass in pieces gives the
+# same bits only when its pieces are NumPy's halves and their sums are added
+# back in NumPy's order. Each structure's sum is the same whatever the piece,
+# as long as the pieces use the same method as the whole array (a reshape when
+# all structures have the same size, else reduceat).
+
+def _split(m):
+    """Where NumPy's pairwise sum cuts ``m`` values: half, rounded down to 8."""
+    h = m // 2
+    return h - h % 8
+
+
+def _leaves(n, size):
+    """``[(start, end)]``: the pieces of NumPy's pairwise sum of ``n`` values
+    no longer than ``size``, in order. NumPy itself does not cut 128 or fewer."""
+    out, todo = [], [(0, n)]
+    while todo:
+        a, b = todo.pop()
+        if b - a <= max(size, 128):
+            out.append((a, b))
+        else:
+            h = a + _split(b - a)
+            todo += [(h, b), (a, h)]
+    return out
+
+
+def _tree_total(sums, n, size):
+    """The sum of ``n`` values from the sums of their ``_leaves(n, size)``,
+    added as NumPy's pairwise sum adds them."""
+    sums = iter(sums)
+
+    def walk(m):
+        if m <= max(size, 128):
+            return next(sums)
+        h = _split(m)
+        left = walk(h)
+        return left + walk(m - h)
+
+    return walk(n)
+
+
+_PAIRWISE = []
+
+
+def _pairwise():
+    """True when this NumPy adds a long array as one pairwise sum, as the
+    pieces assume. Otherwise (a future NumPy that adds in another order)
+    forces in RAM take each metric's own path."""
+    if not _PAIRWISE:
+        # Values of one size: any change of order shows in the last bits.
+        rng = np.random.default_rng(0)
+        values = [rng.random(n) for n in (100_003, 70_001, 1_000_003)]
+        _PAIRWISE.append(all(
+            _tree_total([v[a:b].sum() for a, b in _leaves(len(v), 1000)], len(v), 1000) == v.sum()
+            for v in values))
+    return _PAIRWISE[0]
+
+
+def _frame_sums(values, local, equal):
+    """Each structure's sum as ``segmentSums`` of the whole array makes it:
+    a reshape when every structure has the same size (``equal``), else
+    reduceat, whatever these structures' own sizes."""
+    if equal:
+        return segmentSums(values, local)
+    counts = np.diff(local)
+    out = np.zeros((counts.size,) + values.shape[1:], dtype=np.float64)
+    filled = counts > 0
+    if filled.any():
+        out[filled] = np.add.reduceat(values[:local[-1]], local[:-1][filled], axis=0)
+    return out
+
+
+def _exact_batch(leaf, reference, predicted, offsets, equal):
+    """One piece of forces in RAM: the atoms of ``leaf`` for the dataset sums,
+    and the whole structures that start in it."""
+    start, end = leaf
+    starts = offsets[:-1]
+    a = int(np.searchsorted(starts, start, side="left"))
+    b = len(starts) if end == offsets[-1] else int(np.searchsorted(starts, end, side="left"))
+    stop_at = max(end, int(offsets[b])) if b > a else end
+    t, p = _read_pair(reference, predicted, start, stop_at)
+    with np.errstate(all="ignore"):
+        # Whole columns, never rows of three: a row's sum or mean adds x, y
+        # and z in this same order, so the bits match, but numpy makes one
+        # small call per row (3x the work), and a sum per structure over rows
+        # of three kept 32 threads waiting on each other.
+        x, y, z = (_difference(p[:, j], t[:, j]) for j in range(3))
+        atom_abs = (np.abs(x) + np.abs(y) + np.abs(z)) / 3
+        atom_ss = x * x + y * y + z * z
+        atom_sq = atom_ss / 3
+        local = offsets[a:b + 1] - start
+        first = int(local[0]) if b > a else 0
+        local = local - first
+        sizes = np.diff(local)
+        frame_abs = _frame_sums(atom_abs[first:], local, equal) / sizes
+        frame_rms = np.sqrt(_frame_sums(atom_sq[first:], local, equal) / sizes)
+        net = np.stack([_frame_sums(c[first:], local, equal) for c in (x, y, z)], axis=1)
+    bad = tuple(bool((~np.isfinite(v) & (sizes > 0)).any()) for v in (frame_abs, frame_rms))
+    m = end - start
+    t, p = t[:m], p[:m]
+    atom_abs, atom_sq, atom_ss = atom_abs[:m], atom_sq[:m], atom_ss[:m]
+    lo, hi = _finite_extent(t, p)
+    if m:
+        atom_ranges = np.array([[v.min(), v.max()] for v in (atom_abs, atom_sq, atom_ss)])
+    else:
+        atom_ranges = np.full((3, 2), [np.inf, -np.inf])
+    none = np.empty(0)
+    return _Partial(a, b, m, atom_abs.sum(), atom_sq.sum(),
+                    frame_abs, frame_rms, bad,
+                    lo, hi, np.empty(0, dtype=np.int64), none, none, none, atom_ranges, net=net)
+
+
+def _all_finite(t, p):
+    """True when no value of ``t`` or ``p`` is NaN or infinite: a NaN carries
+    into the lowest and highest value, and an infinity is one of them."""
+    if not t.size:
+        return True
+    return bool(np.isfinite(np.minimum(t.min(), p.min())) and np.isfinite(np.maximum(t.max(), p.max())))
+
+
+def _finite_extent(t, p):
+    """The lowest and highest value over the pairs where both are finite,
+    or (inf, -inf) when there are none. Plain min and max when every value
+    is finite: the masked copies took 4x as long."""
+    if not t.size:
+        return np.inf, -np.inf
+    if _all_finite(t, p):
+        return min(t.min(), p.min()), max(t.max(), p.max())
+    finite_pair = np.isfinite(t) & np.isfinite(p)
+    if not finite_pair.any():
+        return np.inf, -np.inf
+    return (min(t[finite_pair].min(), p[finite_pair].min()),
+            max(t[finite_pair].max(), p[finite_pair].max()))
+
+
 def _parallelism(maximum=4):
     from ffast.metrics.resources import cores
 
@@ -493,6 +630,16 @@ def _net_storage(owner, n):
         return None
 
 
+def _exact_storage(owner, shape):
+    """``("memory", array)`` of ``shape`` in RAM, or None when it does not fit."""
+    size = int(np.prod(shape)) * 8
+    try:
+        with owner.reserve(size) as lease:
+            return "memory", owner.retain(np.empty(shape), lease)
+    except NotEnoughMemory:
+        return None
+
+
 def _table_storage(owner, n, width):
     """``("memory", array)``, ``("files", writers)`` or None: where each
     structure's per-element MAE goes. None leaves it to its own pass."""
@@ -524,28 +671,41 @@ def _drop_table(table):
             writer.abort()
 
 
-def scan(reference, predicted, offsets, elements=None):
+def scan(reference, predicted, offsets, elements=None, exact=False):
     """One pass, complete frames and bounded workspaces; check cancellation.
     With ``elements`` (every atom's atomic number) it also sums the errors
-    per element and keeps each structure's MAE per element."""
+    per element and keeps each structure's MAE per element.
+
+    ``exact`` (forces in RAM): the pieces follow NumPy's pairwise sum, so every
+    value has the bits of the metric run on its own. It keeps no outliers,
+    parity counts or element sums: those take their own exact passes."""
     owner = budget()
     n = len(offsets) - 1
     writers = []
     columns = table = None
-    if elements is not None:
+    if elements is not None and not exact:
         columns = np.asarray(np.unique(elements))
         if columns.size == 0:
             columns = None
         elif columns.size <= _TABLE_ELEMENTS:
             table = _table_storage(owner, n, columns.size)
     element_sums = None if columns is None else np.zeros((3, columns.size))
-    net = _net_storage(owner, n)
+    # Forces in RAM: each metric run on its own keeps its result in RAM, and
+    # what reads it next sums a contiguous array; a column of a wider array
+    # or a result file is summed in another order. So the pass keeps them
+    # the same way, or leaves them to their own pass when they do not fit.
+    net = _exact_storage(owner, (n, 3)) if exact else _net_storage(owner, n)
     # Preserve downstream streaming for large frame series, just as the
     # expression evaluator does. Small arrays (or admitted disk-free results)
     # stay resident; the two O(frames) arrays otherwise own ordinary result files.
     small = n * 16 <= min(128 * 2**20, owner.limit // 8)
-    memory = small and (n * 8 <= owner.block_bytes or owner.result_limit == 0)
-    if memory:
+    memory = exact or (small and (n * 8 <= owner.block_bytes or owner.result_limit == 0))
+    if exact:
+        values = [_exact_storage(owner, (n,)) for _ in range(2)]
+        if values[0] is None or values[1] is None:
+            raise NotEnoughMemory("Each structure's force errors do not fit the RAM budget")
+        values = [v[1] for v in values]
+    elif memory:
         with owner.reserve(n * 16) as lease:
             values = owner.retain(np.empty((n, 2)), lease)
     else:
@@ -573,17 +733,34 @@ def scan(reference, predicted, offsets, elements=None):
         # The merged parity grid's width and start, for the lanes to bin on.
         parity_state = {}
         fine = None
-        fine_ok = True
-        fn = lambda batch: _summary_batch(batch, reference, predicted, offsets,
-                                          elements, columns, table is not None, parity_state)
-        with closing(_map_batches(fn, _batches(offsets, target))) as partials:
+        fine_ok = not exact
+        leaf_sums = ([], [])
+        if exact:
+            counts = np.diff(offsets)
+            equal = bool(counts.size and counts[0] > 0 and (counts == counts[0]).all())
+            if not _pairwise():
+                raise NotEnoughMemory("This NumPy sums in an unknown order")
+            fn = lambda leaf: _exact_batch(leaf, reference, predicted, offsets, equal)
+            batches_in = _leaves(int(offsets[-1]), target)
+        else:
+            fn = lambda batch: _summary_batch(batch, reference, predicted, offsets,
+                                              elements, columns, table is not None, parity_state)
+            batches_in = _batches(offsets, target)
+        with closing(_map_batches(fn, batches_in)) as partials:
             for part in partials:
                 stop.check()
-                absolute_sum += part.absolute_sum
-                squared_sum += part.squared_sum
+                if exact:
+                    leaf_sums[0].append(part.absolute_sum)
+                    leaf_sums[1].append(part.squared_sum)
+                else:
+                    absolute_sum += part.absolute_sum
+                    squared_sum += part.squared_sum
                 bad_frames[0] |= part.bad[0]
                 bad_frames[1] |= part.bad[1]
-                if memory:
+                if exact:
+                    values[0][part.first:part.last] = part.frame_abs
+                    values[1][part.first:part.last] = part.frame_rms
+                elif memory:
                     values[part.first:part.last, 0] = part.frame_abs
                     values[part.first:part.last, 1] = part.frame_rms
                 else:
@@ -629,7 +806,14 @@ def scan(reference, predicted, offsets, elements=None):
                     true_values, pred_values = true_values[keep], pred_values[keep]
                 batches += 1
         stop.check()
-        if memory:
+        if exact:
+            absolute_sum = _tree_total(leaf_sums[0], int(offsets[-1]), target)
+            squared_sum = _tree_total(leaf_sums[1], int(offsets[-1]), target)
+        if exact:
+            for v in values:
+                v.flags.writeable = False
+            frame_mae, frame_rmse = values
+        elif memory:
             values.flags.writeable = False
             frame_mae, frame_rmse = values[:, 0], values[:, 1]
         else:
@@ -706,9 +890,13 @@ def _histogram_batch(batch, reference, predicted, extent, bins):
     t, p = _read_pair(reference, predicted, start, end)
     lo, hi = extent
     width = (hi - lo) / bins
-    keep = np.isfinite(t) & np.isfinite(p)
-    col = np.minimum(((t[keep] - lo) / width).astype(np.int64), bins - 1)
-    row = np.minimum(((p[keep] - lo) / width).astype(np.int64), bins - 1)
+    if _all_finite(t, p):
+        t, p = t.ravel(), p.ravel()     # the same values in the same order
+    else:
+        keep = np.isfinite(t) & np.isfinite(p)
+        t, p = t[keep], p[keep]
+    col = np.minimum(((t - lo) / width).astype(np.int64), bins - 1)
+    row = np.minimum(((p - lo) / width).astype(np.int64), bins - 1)
     return np.bincount(row * bins + col, minlength=bins * bins)
 
 
@@ -732,8 +920,11 @@ def histogram(reference, predicted, offsets, extent, bins=300):
 
 
 class _Group:
-    def __init__(self, offsets, uses, workspace):
+    def __init__(self, offsets, uses, workspace, exact=False):
         self.offsets, self.uses, self.workspace = offsets, set(uses), workspace
+        # Forces in RAM: pieces on many cores, every value bit for bit as
+        # each metric run on its own (see ``scan``).
+        self.exact = exact
         self.condition = threading.Condition()
         self.members = {}
         self.states, self.results, self.errors = {}, {}, {}
@@ -748,6 +939,35 @@ class _Group:
             return self.invalid or not any(
                 not lease.stopped() for lease in self.members.values()
                 if phase == "summary" or "density" in lease.roles)
+
+    def _blocks(self, lanes):
+        """Workspace blocks for ``lanes`` lanes. Forces read from disk: ten
+        blocks a lane (copies read in, then the arithmetic). Forces in RAM
+        are read in place: a lane's piece holds about 80 bytes an atom at
+        its peak, so four times 48 bytes an atom of its piece, which is at
+        most one block's worth of atoms and at most every atom there is."""
+        if not self.exact:
+            return 10 * lanes
+        block = budget().block_bytes
+        piece = min(max(1, block // 48), max(1, int(self.offsets[-1])))
+        return max(1, -(-4 * 48 * piece * lanes // block))
+
+    def start(self, lease):
+        """Begin the summary pass now, on its own thread, when none ran yet.
+        Forces in RAM: the pass reads the reference and predicted forces, so
+        it need not wait while the plan builds the difference table first."""
+        with self.condition:
+            if self.states.get("summary") or self.disabled or self.invalid:
+                return
+
+        def run():
+            try:
+                self.get("summary", lease)
+            except BaseException as exc:   # kept by the group for its consumers
+                log.debug("force_batch_scan: early pass ended: %r", exc)
+
+        threading.Thread(target=copy_context().run, args=(run,), daemon=True,
+                         name="ffast-force-pass").start()
 
     def get(self, phase, lease):
         with self.condition:
@@ -766,10 +986,13 @@ class _Group:
             self.states[phase] = "running"
         callback = lambda: self.stopped(phase)
         token = stop.running_under(callback)
-        width_token = _width.set(_parallelism())
+        # Forces in RAM are not read from disk: as many lanes as the chunk
+        # pool has threads, within the memory budget.
+        width_token = _width.set(_parallelism(32) if self.exact else _parallelism())
         try:
-            with self.workspace(callback, blocks=10 * _width.get()):
-                value = (scan(lease.reference, lease.predicted, self.offsets, lease.elements())
+            with self.workspace(callback, blocks=self._blocks(_width.get())):
+                value = (scan(lease.reference, lease.predicted, self.offsets, lease.elements(),
+                              exact=self.exact)
                          if phase == "summary"
                          else histogram(lease.reference, lease.predicted, self.offsets,
                                         self.results["summary"].extent))
@@ -808,6 +1031,8 @@ class Lease:
     def select(self, metric_id, fn):
         name = role(metric_id, fn)
         if name is None:
+            return NOT_HANDLED
+        if self.group.exact and name in _OWN_PATH_IN_RAM:
             return NOT_HANDLED
         with self.group.condition:
             early = (None if "summary" in self.group.results or self.group.invalid
@@ -860,6 +1085,12 @@ class Lease:
         if self.stopped():
             raise stop.Stopped(stop.STOPPED)
         return value
+
+    def ahead(self):
+        """A step of this plan is about to be computed (not served from the
+        cache): forces in RAM start the pass now, alongside that step."""
+        if self.group.exact and self.roles - _OWN_PATH_IN_RAM:
+            self.group.start(self)
 
     def close(self):
         self.manager.release(self)
@@ -919,6 +1150,15 @@ def _elements_of(source, root, atoms):
     return value
 
 
+# Forces in RAM: their own kernels pick ties and add per element in an order
+# pieces cannot repeat, and they are fast already.
+_OWN_PATH_IN_RAM = frozenset(("outliers", "element_mae", "element_rmse", "element_kde"))
+
+
+def _in_ram(key):
+    return key[-2] == "ram"
+
+
 class ForceScans:
     """At most two idle summaries; live consumers share cancellation/lifetime."""
 
@@ -934,21 +1174,21 @@ class ForceScans:
         if not roles:
             return None
         found = self._identify(plan, source, registry)
-        if found is None:
+        if found is None or (_in_ram(found[0]) and not _pairwise()):
             return None
         key, offsets, reference, predicted = found
         root = plan.root_ids[0]
         elements = ((lambda: _elements_of(source, root, len(reference)))
                     if key[-1] is not None else (lambda: None))
         with self.lock:
-            group = self._group(key, offsets, source)
+            group = self._group(key, offsets, source, exact=_in_ram(key))
             lease = Lease(self, key, group, reference, predicted, source.stopped, roles, elements)
             with group.condition:
                 group.members[id(lease)] = lease
                 group.uses.update(source.uses())
-            return lease
+        return lease
 
-    def _group(self, key, offsets, source):
+    def _group(self, key, offsets, source, exact=False):
         """The live group for ``key``, made when missing. Holds ``self.lock``."""
         owner = budget()
         if self.owner is not owner:
@@ -956,7 +1196,7 @@ class ForceScans:
             self.owner = owner
         group = self.groups.get(key)
         if group is None or group.invalid or group.errors:
-            group = _Group(offsets, source.uses(), self.workspace)
+            group = _Group(offsets, source.uses(), self.workspace, exact)
             self.groups[key] = group
         self.groups.move_to_end(key)
         return group
@@ -968,7 +1208,9 @@ class ForceScans:
         if colour_role(metric_id, registry.get(metric_id)[1]) != "mae":
             return None
         found = self._identify(plan, source, registry)
-        if found is None:
+        if found is None or _in_ram(found[0]):
+            # Summed from blocks that may cut a structure: not the bits of
+            # the metric run on its own, which forces in RAM must keep.
             return None
         key, offsets = found[0], found[1]
         with self.lock:
@@ -1054,7 +1296,7 @@ class ForceScans:
                 continue
             reference, predicted = r.value, p.value
             if (not r.identity or not p.identity or reference is None or predicted is None
-                    or not any(isinstance(v, BatchedArray) for v in (reference, predicted))
+                    or not all(isinstance(v, (BatchedArray, np.ndarray)) for v in (reference, predicted))
                     or reference.shape != predicted.shape or reference.ndim != 2
                     or reference.shape[1] != 3 or reference.dtype != np.float64
                     or predicted.dtype != np.float64):
@@ -1079,9 +1321,12 @@ class ForceScans:
         if identity is None:
             identity = hashlib.sha256(offsets.tobytes()).hexdigest()
         # The elements are named here, not read: the pass reads them a batch
-        # at a time. Unnamed elements are left out of the pass.
+        # at a time. Unnamed elements are left out of the pass, as they are
+        # for forces in RAM (whose element sums keep their own path).
+        in_ram = not any(isinstance(v, BatchedArray) for v in (reference, predicted))
         key = (r.identity, p.identity, reference.shape, identity, registry.revision,
-               source.identity("reference.elements"))
+               "ram" if in_ram else "batched",
+               None if in_ram else source.identity("reference.elements"))
         return key, offsets, reference, predicted
 
     def release(self, lease):
