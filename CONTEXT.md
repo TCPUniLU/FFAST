@@ -676,7 +676,7 @@ against the true count.
 
 ## Rules that hold everywhere
 
-- Python 3.11 exactly.
+- Python 3.11 to 3.13, NumPy 2.
 - `ffast/` imports no GUI toolkit and no OpenGL. There is a test.
 - Metrics are pure, deterministic and picklable, and never see the Environment,
   a Dataset or a Model.

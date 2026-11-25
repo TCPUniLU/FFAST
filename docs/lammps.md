@@ -32,7 +32,7 @@ with builds dated 23 June 2022 and 2 August 2023. Python runs beside LAMMPS.
 
 ## Installation
 
-Install [FFAST](installation.md), activate its Python 3.11 environment, then add
+Install [FFAST](installation.md), activate its Python environment, then add
 **DetectAna 0.3.0+ with the reference-bundle API** and **RDKit** for bond inference:
 
 ```bash

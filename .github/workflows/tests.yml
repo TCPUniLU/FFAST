@@ -8,14 +8,19 @@ on:
 
 jobs:
   full:
-    name: full suite
+    name: full suite (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest and newest Python that pyproject allows.
+        python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
           cache: pip
 
       # The live extra brings DetectAna and RDKit; tests/ffast/live needs both.

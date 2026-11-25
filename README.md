@@ -1,7 +1,7 @@
 # FFAST
 
 [![tests](https://github.com/TCPUniLU/FFAST/actions/workflows/tests.yml/badge.svg)](https://github.com/TCPUniLU/FFAST/actions/workflows/tests.yml)
-[![python](https://img.shields.io/badge/python-3.11-blue.svg)](pyproject.toml)
+[![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **Force Field Analysis and Screening Tool** — compare machine-learned force
@@ -35,20 +35,20 @@ The [documentation index](docs/README.md) also links architecture and design rec
 
 ## Install
 
-FFAST currently requires **Python 3.11**. From a source checkout, using
+FFAST requires **Python 3.11, 3.12 or 3.13** and NumPy 2. From a source checkout, using
 [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 git clone https://github.com/TCPUniLU/FFAST.git
 cd FFAST
-uv venv --python 3.11
+uv venv --python 3.13
 source .venv/bin/activate
 uv pip install -e .
 ffast-cli metrics list
 ffast
 ```
 
-uv installs Python 3.11 if needed, independently of your system Python.
+uv installs Python 3.13 if needed, independently of your system Python.
 For pip, Windows activation and optional dependencies, see
 [Installation](docs/installation.md). The base install includes the browser
 client, server and CLI; it needs no native Qt or OpenGL libraries.

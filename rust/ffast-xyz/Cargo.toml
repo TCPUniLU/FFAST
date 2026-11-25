@@ -10,8 +10,8 @@ name = "_ffast_xyz"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module", "abi3-py311"] }
-numpy = "0.22"
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py311"] }
+numpy = "0.30"
 rayon = "1.10"
 
 [profile.release]

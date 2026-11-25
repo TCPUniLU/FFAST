@@ -2,8 +2,8 @@
 
 [README](../README.md) · [Documentation](README.md) · [Using FFAST](usage.md) · [LAMMPS](lammps.md)
 
-FFAST currently requires **Python 3.11** (`requires-python = "==3.11.*"` in
-[pyproject.toml](../pyproject.toml)). The base install provides the browser
+FFAST requires **Python 3.11, 3.12 or 3.13** (`requires-python = ">=3.11,<3.14"`
+in [pyproject.toml](../pyproject.toml)) and NumPy 2. The base install provides the browser
 client, server and CLI. It needs no native Qt/OpenGL libraries or JavaScript
 build step.
 
@@ -17,17 +17,17 @@ cd FFAST
 **With [uv](https://docs.astral.sh/uv/getting-started/installation/):**
 
 ```bash
-uv venv --python 3.11
+uv venv --python 3.13
 source .venv/bin/activate
 uv pip install -e .
 ```
 
-uv installs Python 3.11 if needed; your system Python can use another version.
+uv installs Python 3.13 if needed; your system Python can use another version.
 
-**With pip and Python 3.11:**
+**With pip and Python 3.11 to 3.13:**
 
 ```bash
-python3.11 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
 ```

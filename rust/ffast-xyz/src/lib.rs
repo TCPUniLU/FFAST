@@ -1054,7 +1054,7 @@ fn parse_into<'py>(
         reference: &reference,
         known_extras: &known_extras,
     };
-    let parts: Result<Vec<Part>, String> = py.allow_threads(|| {
+    let parts: Result<Vec<Part>, String> = py.detach(|| {
         let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(|e| e.to_string())?;
         pool.install(|| chunks.into_par_iter().map(|c| parse_chunk(&ctx, c)).collect())
     });
@@ -1090,37 +1090,37 @@ fn parse_into<'py>(
         }
     }
 
-    let out = PyDict::new_bound(py);
-    let vals = PyDict::new_bound(py);
+    let out = PyDict::new(py);
+    let vals = PyDict::new(py);
     for (key, rows, xs) in values.keys {
-        let rows = PyArray1::from_vec_bound(py, rows);
+        let rows = PyArray1::from_vec(py, rows);
         let key = String::from_utf8_lossy(&key).into_owned();
         if xs.iter().all(|x| matches!(x, Value::I(_))) {
             let ints: Vec<i64> = xs.iter().map(|x| if let Value::I(i) = x { *i } else { 0 }).collect();
-            vals.set_item(key, (rows, PyArray1::from_vec_bound(py, ints)))?;
+            vals.set_item(key, (rows, PyArray1::from_vec(py, ints)))?;
         } else {
             // As np.array makes a list mixing ints and floats.
             let floats: Vec<f64> = xs.iter().map(|x| match x { Value::I(i) => *i as f64, Value::F(f) => *f }).collect();
-            vals.set_item(key, (rows, PyArray1::from_vec_bound(py, floats)))?;
+            vals.set_item(key, (rows, PyArray1::from_vec(py, floats)))?;
         }
     }
-    let txts = PyDict::new_bound(py);
+    let txts = PyDict::new(py);
     for (key, rows, xs) in texts.keys {
-        txts.set_item(String::from_utf8_lossy(&key).into_owned(), (PyArray1::from_vec_bound(py, rows), PyList::new_bound(py, xs)))?;
+        txts.set_item(String::from_utf8_lossy(&key).into_owned(), (PyArray1::from_vec(py, rows), PyList::new(py, xs)?))?;
     }
-    let news = PyDict::new_bound(py);
+    let news = PyDict::new(py);
     for col in new {
         let rows = col.rows.len();
-        let vals = PyArray1::from_vec_bound(py, col.vals);
+        let vals = PyArray1::from_vec(py, col.vals);
         let vals = if col.width == 1 { vals.into_any() } else { vals.reshape([rows, col.width])?.into_any() };
-        news.set_item(col.name, (PyArray1::from_vec_bound(py, col.rows), vals))?;
+        news.set_item(col.name, (PyArray1::from_vec(py, col.rows), vals))?;
     }
     let seen: Vec<&str> = targets.iter().zip(&seen).filter(|(_, s)| **s).map(|((name, _), _)| name.as_str()).collect();
     out.set_item("values", vals)?;
     out.set_item("texts", txts)?;
     out.set_item("new", news)?;
     out.set_item("seen", seen)?;
-    let found = PyDict::new_bound(py);
+    let found = PyDict::new(py);
     for (name, (kind, n)) in extras {
         found.set_item(name, ((kind as char).to_string(), n))?;
     }
@@ -1297,8 +1297,8 @@ fn find_frames<'py>(
 ) -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8)> {
     let file = std::fs::File::open(path)?;
     let size = file.metadata()?.len();
-    let (starts, counts, next, state) = py.allow_threads(|| find_plain(&file, size, offset, limit, threads))?;
-    Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state))
+    let (starts, counts, next, state) = py.detach(|| find_plain(&file, size, offset, limit, threads))?;
+    Ok((PyArray1::from_vec(py, starts), PyArray1::from_vec(py, counts), next as u64, state))
 }
 
 /// The work of `find_frames`, without Python.
@@ -1341,7 +1341,9 @@ type WindowRead = std::io::Result<(Vec<u8>, Vec<usize>)>;
 struct Ahead {
     start: u64,
     end: u64,
-    done: std::sync::mpsc::Receiver<WindowRead>,
+    // In a Mutex: a class Python sees must be safe to share between
+    // threads (PyO3 0.23+), and a channel receiver is not.
+    done: std::sync::Mutex<std::sync::mpsc::Receiver<WindowRead>>,
 }
 
 /// Bytes `[start, end)` of `file` in `buf[CARRY_ROOM..]` and their line ends
@@ -1401,7 +1403,7 @@ impl FrameFinder {
         let joined = match self.carry.take() {
             Some((at, bytes)) if at == offset && self.queue.front().is_some_and(|a| a.start == self.carry_end) => {
                 let ahead = self.queue.pop_front().unwrap();
-                let (buf, nl) = ahead.done.recv().map_err(std::io::Error::other)??;
+                let (buf, nl) = ahead.done.into_inner().map_err(|_| std::io::Error::other("window reader failed"))?.recv().map_err(std::io::Error::other)??;
                 tock("find.wait for read-ahead", &mut clock);
                 if ahead.end >= need {
                     Some(self.join(bytes, buf, nl, ahead.end))
@@ -1487,7 +1489,7 @@ impl FrameFinder {
             std::thread::spawn(move || {
                 let _ = tx.send(read_window(&file, &pool, buf, start, end));
             });
-            self.queue.push_back(Ahead { start, end, done: rx });
+            self.queue.push_back(Ahead { start, end, done: std::sync::Mutex::new(rx) });
             self.read_to = end;
         }
     }
@@ -1533,8 +1535,8 @@ impl FrameFinder {
     /// threads)` gives them.
     fn find<'py>(&mut self, py: Python<'py>, offset: u64, limit: u64)
         -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8)> {
-        let (starts, counts, next, state) = py.allow_threads(|| self.find_inner(offset, limit))?;
-        Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state))
+        let (starts, counts, next, state) = py.detach(|| self.find_inner(offset, limit))?;
+        Ok((PyArray1::from_vec(py, starts), PyArray1::from_vec(py, counts), next as u64, state))
     }
 }
 
@@ -1782,7 +1784,7 @@ fn energies<'py>(
     let file = std::fs::File::open(path)?;
     let size = file.metadata()?.len();
     let per_config: HashSet<Vec<u8>> = per_config.into_iter().map(String::into_bytes).collect();
-    let join = py.allow_threads(|| -> std::io::Result<EnergyJoin> {
+    let join = py.detach(|| -> std::io::Result<EnergyJoin> {
         let threads = threads.max(1);
         let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(std::io::Error::other)?;
         let mut join = EnergyJoin {
@@ -1835,8 +1837,8 @@ fn energies<'py>(
         }
         Ok(join)
     })?;
-    let columns = join.columns.into_iter().map(|c| PyArray1::from_vec_bound(py, c)).collect();
-    Ok((join.names, join.first, columns, PyArray1::from_vec_bound(py, join.python)))
+    let columns = join.columns.into_iter().map(|c| PyArray1::from_vec(py, c)).collect();
+    Ok((join.names, join.first, columns, PyArray1::from_vec(py, join.python)))
 }
 
 #[pymodule]
@@ -1852,6 +1854,6 @@ fn _ffast_xyz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("FIND_PYTHON", FIND_PYTHON)?;
     // parse_into writes NaN into the rows of frames that lack a column.
     m.add("FILLS_MISSING", true)?;
-    m.add("NotFast", m.py().get_type_bound::<NotFast>())?;
+    m.add("NotFast", m.py().get_type::<NotFast>())?;
     Ok(())
 }

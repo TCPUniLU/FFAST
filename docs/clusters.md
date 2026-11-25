@@ -16,7 +16,7 @@ cluster:
       "username": "myuser",
       "identity_file": "~/.ssh/id_ed25519",
       "provision": true,
-      "modules": ["Python/3.11"],
+      "modules": ["Python/3.13"],
       "venv_path": "~/.ffast/venv",
       "partition": "gpu",
       "account": "my_account",
@@ -48,8 +48,8 @@ it enabled, FFAST builds a wheel locally and transfers it over SSH. Inside the
 SLURM job, it loads `modules`, creates a venv at `venv_path` with access to the
 modules' Python packages, and installs FFAST and its remaining dependencies.
 An install marker avoids repeating setup until the checkout or setup changes.
-The modules must provide Python 3.11, PyTorch, NumPy, SciPy, scikit-learn and
-ASE; the single Python module above is only a placeholder for your site's
+The modules must provide Python 3.11 to 3.13, PyTorch, NumPy 2, SciPy,
+scikit-learn and ASE; the single Python module above is only a placeholder for your site's
 software stack. Setup runs from a local FFAST source checkout.
 
 For an environment you manage yourself, set `provision: false` (or omit it)
@@ -58,7 +58,7 @@ and provide `ffast_server_cmd`, for example:
 ```json
 {
   "provision": false,
-  "ffast_server_cmd": "module load Python/3.11 && source ~/env/ffast_env/bin/activate && ffast-server"
+  "ffast_server_cmd": "module load Python/3.13 && source ~/env/ffast_env/bin/activate && ffast-server"
 }
 ```
 

@@ -6,12 +6,12 @@ before you write code.
 
 ## Setting up
 
-FFAST currently requires Python 3.11; see `requires-python` in `pyproject.toml`.
+FFAST requires Python 3.11 to 3.13 and NumPy 2; see `requires-python` in `pyproject.toml`.
 
 ```bash
 git clone https://github.com/TCPUniLU/FFAST.git
 cd FFAST
-python3.11 -m venv .venv && source .venv/bin/activate
+python3.13 -m venv .venv && source .venv/bin/activate
 python -m pip install -e ".[dev,live]"  # includes DetectAna and RDKit for live tests
 python -m pip install ./rust/ffast-xyz  # build the fast parser from this checkout
 python -m playwright install chromium  # browser used by the browser tests
