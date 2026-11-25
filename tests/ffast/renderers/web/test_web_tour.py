@@ -335,6 +335,21 @@ async def _seen(page, name, timeout=30000):
         "(n) => window.seen.filter((g) => g.name === n).pop().detail", name)
 
 
+async def _count(page, name):
+    return await page.evaluate("(n) => window.seen.filter((g) => g.name === n).length", name)
+
+
+async def _next(page, name, before, timeout=30000):
+    """The detail of the first `name` event after the `before` already seen:
+    `_seen` would return an earlier one (the folder listed when the browser
+    opened) while the listing a click asked for is still on its way."""
+    await page.wait_for_function(
+        "([n, k]) => window.seen.filter((g) => g.name === n).length > k",
+        arg=[name, before], timeout=timeout)
+    return await page.evaluate(
+        "([n, k]) => window.seen.filter((g) => g.name === n)[k].detail", [name, before])
+
+
 async def _row(page, name):
     return page.locator("#fb-list .fb-row", has=page.locator(".name", has_text=re.compile(f"^{re.escape(name)}/?$")))
 
@@ -355,8 +370,9 @@ async def test_the_browser_tells_tours_about_folders_files_and_loads(ffast_web_s
             await page.evaluate("(f) => window.ffastApp._browser.open('dataset', { folder: f })", root)
             assert (await _seen(page, "browser-opened"))["mode"] == "dataset"
             await expect(page.locator("#fb-path")).to_have_value(root)
+            before = await _count(page, "folder-listed")
             await (await _row(page, "variable-sized molecular")).click()
-            listed = await _seen(page, "folder-listed")
+            listed = await _next(page, "folder-listed", before)
             assert listed == {"mode": "dataset", "path": folder}
             assert await page.evaluate("() => window.ffastApp._browser.folder()") == folder
             await (await _row(page, "dataset.xyz")).click()
