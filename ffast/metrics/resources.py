@@ -88,8 +88,18 @@ def _read_int(path: str) -> int | None:
 # 7.9 s of a 31 s parse of 48 GB (2026-11-21). An answer this recent is
 # reused; a group takes about 0.1 s and the parser's own estimate still
 # applies to what it allocates.
+#
+# Under load one walk is far slower: while Basic Errors computed on 32 threads
+# it took 7.5-9.9 s (each /proc read waits its turn for the interpreter), and
+# 16-18 threads walked at once (MeluXina, 2026-11-25). So an older answer is
+# refreshed by one walk on its own thread while callers use the last answer;
+# only a first call, or one for another allocation, walks while it waits. An
+# answer can then be a few seconds old under load; the budget still counts
+# what this server reserved since.
 HEADROOM_REUSE_S = 0.5
 _headroom_memo = None             # (when, allocation in MiB, answer)
+_refreshing = None                # the thread walking for a newer answer
+_refresh_lock = threading.Lock()
 _clock = time.monotonic
 
 
@@ -112,13 +122,34 @@ def slurm_headroom() -> int | None:
             return None
         now = _clock()
         memo = _headroom_memo
-        if memo is not None and memo[1] == amount and 0 <= now - memo[0] < HEADROOM_REUSE_S:
+        if memo is not None and memo[1] == amount:
+            if not 0 <= now - memo[0] < HEADROOM_REUSE_S:
+                _refresh(amount)
             return memo[2]
         answer = _walk_headroom(amount)
         _headroom_memo = (now, amount, answer)
         return answer
     except (ValueError, OSError, ImportError):
         return None
+
+
+def _refresh(amount: int) -> None:
+    """Start one walk on its own thread, unless one is under way."""
+    global _refreshing
+    with _refresh_lock:
+        if _refreshing is not None and _refreshing.is_alive():
+            return
+
+        def walk():
+            global _headroom_memo
+            try:
+                answer = _walk_headroom(amount)
+            except Exception:        # the last answer stays; the next call tries again
+                return
+            _headroom_memo = (_clock(), amount, answer)
+
+        _refreshing = threading.Thread(target=walk, daemon=True, name="ffast-headroom")
+        _refreshing.start()
 
 
 def _walk_headroom(amount: int) -> int:
