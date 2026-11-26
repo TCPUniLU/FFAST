@@ -130,11 +130,13 @@ LENGTH_ERR = {"n": None, "error": "not found", "done": True}
 LENGTH_PARTIAL = {"n": 50000, "error": None, "done": False}
 DIR_OK = {
     "path": "/data", "parent": "/", "home": "/home/u",
-    "entries": [{"name": "sub", "is_dir": True, "size": 0},
-                {"name": "a.xyz", "is_dir": False, "size": 1234}],
+    "entries": [{"name": "sub", "is_dir": True, "size": 0, "mtime": None},
+                {"name": "a.xyz", "is_dir": False, "size": 1234, "mtime": 1.7e9}],
     "error": None,
+    "file": "/data/a.xyz",
 }
-DIR_ROOT = {"path": "/", "parent": None, "home": "/home/u", "entries": [], "error": None}
+DIR_ROOT = {"path": "/", "parent": None, "home": "/home/u", "entries": [], "error": None,
+            "file": None}
 
 
 @pytest.mark.parametrize("payload", [KEYS_OK, KEYS_ERR])
