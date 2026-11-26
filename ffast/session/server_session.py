@@ -1027,6 +1027,16 @@ class ServerSession:
                 final=done, error=error if done else None, request_id=request_id,
             ))
 
+        # Partial counts are posted from the scan's thread. asyncio does not
+        # order them before the end of to_thread (the total came first in about
+        # 1 run in 3 of a bare test, 2026-11-26), so the end waits for them.
+        posted = []
+
+        async def send_end(n, error):
+            await asyncio.gather(*(asyncio.wrap_future(f) for f in posted),
+                                 return_exceptions=True)
+            await send(n, error, done=True)
+
         async def run():
             n: int | None = None
             error: str | None = None
@@ -1034,7 +1044,8 @@ class ServerSession:
                 if fi.is_indexable(path):
                     index = await asyncio.to_thread(
                         fi.get_frame_index, path, cancel=cancel,
-                        progress=lambda k: asyncio.run_coroutine_threadsafe(send(k), loop),
+                        progress=lambda k: posted.append(
+                            asyncio.run_coroutine_threadsafe(send(k), loop)),
                     )
                     n = len(index)
                 else:
@@ -1042,7 +1053,7 @@ class ServerSession:
                     n = await asyncio.to_thread(AtomsList.calc_dataset_length_static, path)
                 logger.info("PROBE_DATASET_LENGTH %r: n=%d", path, n)
             except fi.FrameIndexCancelled:
-                await send(None, "cancelled", done=True)
+                await send_end(None, "cancelled")
                 return
             except Exception as exc:
                 logger.warning("PROBE_DATASET_LENGTH error for %r: %s", path, exc, extra={"popup": False})
@@ -1051,7 +1062,7 @@ class ServerSession:
                     *_probe_path_diagnostics(path), extra={"popup": False},
                 )
                 error = str(exc)
-            await send(n, error, done=True)
+            await send_end(n, error)
             logger.debug("DATASET_LENGTH_RESPONSE queued for %r", path)
 
         self._length_probe_task = asyncio.create_task(run())
