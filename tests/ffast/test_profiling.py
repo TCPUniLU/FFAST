@@ -39,9 +39,12 @@ def test_failure_retains_trace_and_restores_hooks(tmp_path):
 
 
 @pytest.mark.parametrize("mode, budget, expected_mode, refused", [
-    # Eager load and metrics fit 1 MiB. Memory hints (4096 MB on force parity)
-    # once refused these; they must not reserve the shared budget.
-    ("auto", 2**20, "eager", False),
+    # Eager load and metrics fit 4 MiB. Memory hints (4096 MB on force parity)
+    # once refused these; they must not reserve the shared budget. Not 1 MiB:
+    # one dashboard result is 0.7 MB (a 300 x 301 grid) and its reply needs
+    # it plus a block, so on a busy machine (4 cores, GitHub CI) a reply that
+    # overlapped other work holding 0.8 MiB was refused every run.
+    ("auto", 4 * 2**20, "eager", False),
     ("saving", 16 * 2**20, "saving", False),
     # Too small for the replies: the profiler must report the refusals and
     # still measure the next open.
