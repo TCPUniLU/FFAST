@@ -287,17 +287,30 @@ def test_worker_recycles_after_max_tasks(registry):
         executor.shutdown()
 
 
-def test_a_retiring_worker_serves_until_its_replacement_is_ready(registry):
+def test_a_retiring_worker_serves_until_its_replacement_is_ready(registry, monkeypatch):
     # A replacement booted inside the next task made that click wait ~700 ms,
     # every max_tasks_per_worker tasks.
     executor = WorkerProcessExecutor(registry, PoolPolicy(max_tasks_per_worker=2))
     try:
         retiring = executor.call(_pool_pid, {})
         executor.call(_pool_pid, {})
+        assert executor._next is not None
 
-        # The replacement is still booting (imports take hundreds of ms).
+        # Held as booting: on Linux a worker is forked, and when this process
+        # has already imported _PRELOAD it is ready in ~5 ms, so a pause that
+        # short before the next call let it take over (GitHub CI, 2026-11-26).
+        real = executor._await_ready
+        booting = True
+
+        def ready(worker, timeout=None):
+            if booting and worker is executor._next and timeout == 0:
+                return False
+            return real(worker, timeout)
+
+        monkeypatch.setattr(executor, "_await_ready", ready)
         assert executor.call(_pool_pid, {}) == retiring
 
+        booting = False
         deadline = time.monotonic() + 30
         while executor.call(_pool_pid, {}) == retiring:
             assert time.monotonic() < deadline, "the replacement never took over"
