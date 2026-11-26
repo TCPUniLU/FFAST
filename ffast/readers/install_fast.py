@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-RELEASE = "0.1.0"          # the ffast-xyz this FFAST installs; = rust/ffast-xyz/Cargo.toml
+RELEASE = "0.2.0"          # the ffast-xyz this FFAST installs; = rust/ffast-xyz/Cargo.toml
 REPO = "https://github.com/TCPUniLU/FFAST"
 RUSTUP = "https://rustup.rs"
 WORKS_WITHOUT = "FFAST works without it: .xyz files load with the slower Python parser."
