@@ -39,6 +39,7 @@ OPEN = ".open"
 SOURCE = ".source.json"
 _META = "meta.json"
 _IDENTITY = re.compile(r"^[0-9a-f]{64}")
+_SCAN_PROGRESS = (".tail.npz", ".progress.json")   # see _batch_entries
 # After the identity: a per-atom batch is "-<a>-<b>.npz" with a >= 0. The
 # scalar batch "--1--1.npz", the digests and the scan record are small records.
 _ATOM_BATCH = re.compile(r"^-\d+-\d+\.npz$")
@@ -160,8 +161,13 @@ def _batch_entries(root):
         groups.setdefault(name[:64], []).append((f, stat))
     out = []
     for identity, items in groups.items():
+        # A running scan's tail and progress files (ADR 0107) are deleted
+        # with the entry but not counted: they are a few MB at most, and a
+        # commit briefly holds two tails, which made a batch's room depend
+        # on thread timing.
         entry = Entry("batches", identity, None, [f for f, _ in items],
-                      sum(s.st_size for _, s in items), 0.0, root)
+                      sum(s.st_size for f, s in items if not f.name.endswith(_SCAN_PROGRESS)),
+                      0.0, root)
         entry.path = _read_path(entry.source_file)
         entry.state = _read_state(entry.source_file)
         stamps = {f.name: s.st_mtime for f, s in items}

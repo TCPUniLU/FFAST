@@ -173,6 +173,39 @@ def test_results_and_temporary_files_are_not_entries(tmp_path):
     assert cs.used(tmp_path) == 0
 
 
+def _scan_record_files(root, n):
+    """What a running scan's progress record holds (ADR 0107): two tail
+    files for a moment (the new one is written before the old one goes)
+    and the record itself."""
+    folder = root / "batches"
+    ident = _identity(n)
+    (folder / f"{ident}.770.tail.npz").write_bytes(b"x" * MB)
+    (folder / f"{ident}.1521.tail.npz").write_bytes(b"x" * MB)
+    (folder / f"{ident}.progress.json").write_bytes(b"x" * 10)
+
+
+def test_a_scan_records_tail_and_progress_files_do_not_count_as_cache(tmp_path):
+    _batch(tmp_path, 1, "/data/x.xyz", atom=3 * MB)
+    alone = cs.used(tmp_path)
+    _scan_record_files(tmp_path, 1)
+    assert cs.used(tmp_path) == alone
+
+
+def test_a_batch_fits_while_a_scan_holds_two_tail_files(tmp_path):
+    _batch(tmp_path, 1, "/data/x.xyz", atom=3 * MB)
+    limit = cs.used(tmp_path) + 2 * MB        # read before the scan's record
+    _scan_record_files(tmp_path, 1)
+    assert cs.make_room(tmp_path, 2 * MB, limit, saving="/data/x.xyz")
+    assert len(_names(tmp_path)) == 5        # nothing evicted
+
+
+def test_deleting_a_dataset_removes_its_scan_record_files_too(tmp_path):
+    _batch(tmp_path, 1, "/data/x.xyz", atom=3 * MB)
+    _scan_record_files(tmp_path, 1)
+    cs.delete_dataset(tmp_path, "/data/x.xyz")
+    assert _names(tmp_path) == []
+
+
 def test_two_failing_saves_warn_once(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr(cs, "_warned_full", False)
     _array(tmp_path, "a", "/data/a.xyz", 4 * MB)
